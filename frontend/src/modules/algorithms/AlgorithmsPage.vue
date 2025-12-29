@@ -8,7 +8,7 @@
       </div>
     </div>
 
-    <div v-if="loading" class="loading">加载中...</div>
+    <div v-if="loading" class="loading">加载中..1.</div>
     <div v-if="error" class="error">{{ error }}</div>
 
     <div class="filter-bar">
