@@ -12,8 +12,9 @@
     </div>
 
     <div class="content-wrapper">
-      <!-- 左侧：上传和配置区域 -->
-      <div class="left-panel">
+      <!-- 上方：选择数据源 / 选择算法 并排 -->
+      <div class="top-row">
+        <!-- 选择数据源 -->
         <div class="card">
           <h2>选择数据源</h2>
           
@@ -55,199 +56,214 @@
           </div>
         </div>
 
-        <!-- 文件选择弹出框 -->
-        <div v-if="showFileModal" class="modal-overlay" @click.self="closeFileModal">
-          <div class="modal-content">
-            <div class="modal-header">
-              <h3>选择文件</h3>
-              <button class="modal-close" @click="closeFileModal">×</button>
-            </div>
-            <div class="modal-body">
-              <div v-if="loadingExistingFiles" class="loading-state">
-                <p>加载文件列表中...</p>
-              </div>
-              <div v-else-if="existingFilesError" class="error-state">
-                <p>{{ existingFilesError }}</p>
-                <button @click="loadExistingFiles" class="retry-btn">重试</button>
-              </div>
-              <template v-else>
-                <div class="existing-filter-bar">
-                  <input 
-                    v-model="existingSearch" 
-                    type="text" 
-                    class="existing-search-input" 
-                    placeholder="搜索已有文件名或类型..."
-                  />
-                </div>
-                <div v-if="totalExistingFiles === 0" class="empty-state">
-                  <p>暂无可用文件</p>
-                </div>
-                <div v-else class="files-list" ref="filesListRef">
-                  <div 
-                    v-for="file in displayedExistingFiles" 
-                    :key="file.id"
-                    class="file-item"
-                    :class="{ selected: tempSelectedFile?.id === file.id }"
-                    @click="selectTempFileAndClose(file)"
-                  >
-                    <div class="file-info">
-                      <div class="file-name">{{ getFileNameWithoutExt(file.original_name) }}</div>
-                      <div class="file-meta">
-                        <span class="file-type">{{ getFileExtension(file.original_name) }}</span>
-                        <span class="file-size">{{ formatFileSize(file.size_bytes) }}</span>
-                        <span class="file-date">{{ formatDate(file.created_at) }}</span>
-                      </div>
-                    </div>
-                    <div class="file-checkbox">
-                      <input 
-                        type="radio" 
-                        :checked="tempSelectedFile?.id === file.id"
-                        @change="selectTempFileAndClose(file)"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </div>
-        </div>
-
+        <!-- 选择算法 -->
         <div class="card">
           <h2>选择算法</h2>
-          <div class="form-group">
+          <div class="form-group algorithm-group">
             <label>可用算法</label>
-            <select v-model="selectedAlgorithm" class="form-control" :disabled="algLoading">
-              <option value="">-- 请选择算法 --</option>
-              <option v-for="algo in availableAlgorithms" :key="algo.id" :value="algo.algo_key" :disabled="!algo.algo_key">
-                {{ (algo.type ? (algo.name + ' - ' + algo.type) : algo.name) + (!algo.algo_key ? '（请先配置 algo_key）' : '') }}
-              </option>
-            </select>
+            <div 
+              class="algorithm-select-wrapper"
+              @mouseenter="handleAlgoSelectMouseEnter"
+              @mouseleave="handleAlgoSelectMouseLeave"
+            >
+              <select v-model="selectedAlgorithm" class="form-control" :disabled="algLoading">
+                <option value="">-- 请选择算法 --</option>
+                <option v-for="algo in availableAlgorithms" :key="algo.id" :value="algo.algo_key" :disabled="!algo.algo_key">
+                  {{ (algo.type ? (algo.name + ' - ' + algo.type) : algo.name) + (!algo.algo_key ? '（请先配置 algo_key）' : '') }}
+                </option>
+              </select>
+              <div v-if="showAlgoTooltip && currentAlgoDescription" class="algorithm-tooltip">
+                {{ currentAlgoDescription }}
+              </div>
+            </div>
             <div class="form-hint" v-if="algLoading">算法列表加载中...</div>
             <div class="form-error" v-else-if="algError">
               {{ algError }}
               <button class="link-btn" type="button" @click="fetchAlgorithms">重试</button>
             </div>
           </div>
-          <div v-if="selectedAlgorithm" class="algorithm-info">
-            <p><strong>算法描述:</strong> {{ getAlgorithmDescription() }}</p>
-            <p><strong>算法信息:</strong> {{ getAlgorithmParams() }}</p>
-          </div>
-        </div>
-
-
-        <div class="action-buttons">
-          <button 
-            @click="startIdentification" 
-            :disabled="!canStartIdentification"
-            class="btn btn-primary"
-          >
-            开始识别
-          </button>
-          <button @click="resetForm" class="btn btn-secondary">
-            重置
-          </button>
         </div>
       </div>
 
-      <!-- 右侧：结果展示区域 -->
-      <div class="right-panel">
-        <!-- 网络可视化卡片 -->
-        <div class="card" v-if="(visualLoading || visualError || visualData) && !(tempSelectedFile && tempSelectedFile?.id !== selectedExistingFile?.id)">
-          <h2>网络可视化</h2>
-          <div v-if="visualLoading" class="loading-state">
-            <p>可视化生成中...</p>
-          </div>
-          <div v-else-if="visualError" class="error-state">
-            <p>{{ visualError }}</p>
-            <div class="action-buttons">
-              <button class="btn btn-primary" :disabled="!selectedExistingFile" @click="visualizeNetwork(selectedExistingFile)">重试</button>
-              <button class="btn btn-secondary" @click="clearVisualization">清空</button>
+      <!-- 下方：左侧网络拓扑（在数据源下方），右侧识别结果（在算法下方） -->
+      <div class="middle-actions">
+        <button 
+          @click="startIdentification" 
+          :disabled="!canStartIdentification"
+          class="btn btn-primary"
+        >
+          开始识别
+        </button>
+        <button @click="resetForm" class="btn btn-secondary">
+          重置
+        </button>
+      </div>
+
+      <div class="bottom-row">
+        <div class="left-panel">
+          <!-- 网络可视化卡片 -->
+          <div class="card" v-if="!(tempSelectedFile && tempSelectedFile?.id !== selectedExistingFile?.id)">
+            <h2>网络拓扑可视化</h2>
+            <div v-if="visualLoading" class="loading-state">
+              <p>可视化生成中...</p>
+            </div>
+            <div v-else-if="visualError" class="error-state">
+              <p>{{ visualError }}</p>
+              <div class="action-buttons">
+                <button class="btn btn-primary" :disabled="!selectedExistingFile" @click="visualizeNetwork(selectedExistingFile)">重试</button>
+                <button class="btn btn-secondary" @click="clearVisualization">清空</button>
+              </div>
+            </div>
+            <div v-else-if="visualData" class="visual-content">
+              <div class="visual-meta">
+                <span>文件：{{ getFileNameWithoutExt(visualData?.file?.original_name) }}</span>
+                <span>节点：{{ visualData?.graph?.meta?.nodes || 0 }}</span>
+                <span>边：{{ visualData?.graph?.meta?.edges || 0 }}</span>
+                <span v-if="visualData?.graph?.meta?.truncated" class="warning">已截断至 {{ visualData?.graph?.meta?.max_edges }} 条边</span>
+              </div>
+              <GraphView v-if="visualData?.graph" :graph="visualData.graph" height="480px" />
+              <div class="action-buttons">
+                <button class="btn btn-secondary" @click="clearVisualization">清空</button>
+              </div>
+            </div>
+            <div v-else class="empty-state">
+              <p>暂无网络拓扑</p>
+              <p class="hint">选择文件后，点击"可视化网络"按钮</p>
             </div>
           </div>
-          <div v-else class="visual-content">
-            <div class="visual-meta">
-              <span>文件：{{ getFileNameWithoutExt(visualData?.file?.original_name) }}</span>
-              <span>节点：{{ visualData?.graph?.meta?.nodes || 0 }}</span>
-              <span>边：{{ visualData?.graph?.meta?.edges || 0 }}</span>
-              <span v-if="visualData?.graph?.meta?.truncated" class="warning">已截断至 {{ visualData?.graph?.meta?.max_edges }} 条边</span>
+
+        </div>
+
+        <div class="right-panel">
+          <div class="card">
+            <h2>识别结果</h2>
+            
+            <!-- 进度条 -->
+            <div v-if="isProcessing" class="progress-section">
+              <div class="progress-bar">
+                <div class="progress-fill" :style="{ width: progress + '%' }"></div>
+              </div>
+              <p class="progress-text">处理中... {{ progress }}%</p>
+              <p class="status-text">{{ statusMessage }}</p>
             </div>
-            <GraphView v-if="visualData?.graph" :graph="visualData.graph" height="480px" />
-            <div class="action-buttons">
-              <button class="btn btn-secondary" @click="clearVisualization">清空</button>
+
+            <!-- 结果表格 -->
+            <div v-else-if="results.length > 0" class="results-section">
+              <div class="results-summary" :class="{ 'is-single': networkNodeCount > 0 && networkNodeCount < 10 }">
+                <div class="summary-item">
+                  <span class="label">网络总节点数:</span>
+                  <span class="value">{{ networkNodeCount }}</span>
+                </div>
+
+                <div class="summary-item topk-item" v-if="!(networkNodeCount > 0 && networkNodeCount < 10)">
+                  <span class="label">展示 Top-K:</span>
+                  <select v-model.number="topK" class="topk-select">
+                    <option :value="10">Top-10</option>
+                    <option :value="20">Top-20</option>
+                    <option :value="50">Top-50</option>
+                    <option :value="100">Top-100</option>
+                  </select>
+                  <span class="topk-hint">当前展示 {{ effectiveTopK }} 条</span>
+                </div>
+
+                <div class="summary-item" v-else>
+                  <span class="label">展示范围:</span>
+                  <span class="value">全部</span>
+                </div>
+              </div>
+
+              <div class="table-wrapper">
+                <table class="results-table">
+                  <thead>
+                    <tr>
+                      <th>序号</th>
+                      <th>节点</th>
+                      <th>识别结果</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(result, index) in displayedResults" :key="index">
+                      <td>{{ index + 1 }}</td>
+                      <td class="data-cell">{{ result.input }}</td>
+                      <td class="result-cell">{{ formatResultValue(result.output) }}</td>
+
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="action-buttons">
+                <button @click="exportResults" class="btn btn-primary">
+                  导出结果
+                </button>
+                <button @click="clearResults" class="btn btn-secondary">
+                  清空结果
+                </button>
+              </div>
+            </div>
+
+            <!-- 空状态 -->
+            <div v-else class="empty-state">
+              <p>暂无识别结果</p>
+              <p class="hint">选择文件和算法后，点击"开始识别"按钮</p>
             </div>
           </div>
         </div>
-        <div class="card">
-          <h2>识别结果</h2>
-          
-          <!-- 进度条 -->
-          <div v-if="isProcessing" class="progress-section">
-            <div class="progress-bar">
-              <div class="progress-fill" :style="{ width: progress + '%' }"></div>
-            </div>
-            <p class="progress-text">处理中... {{ progress }}%</p>
-            <p class="status-text">{{ statusMessage }}</p>
+      </div>
+
+      <!-- 文件选择弹出框（独立于布局） -->
+      <div v-if="showFileModal" class="modal-overlay" @click.self="closeFileModal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>选择文件</h3>
+            <button class="modal-close" @click="closeFileModal">×</button>
           </div>
-
-          <!-- 结果表格 -->
-          <div v-else-if="results.length > 0" class="results-section">
-            <div class="results-summary" :class="{ 'is-single': networkNodeCount > 0 && networkNodeCount < 10 }">
-              <div class="summary-item">
-                <span class="label">网络总节点数:</span>
-                <span class="value">{{ networkNodeCount }}</span>
-              </div>
-
-              <div class="summary-item topk-item" v-if="!(networkNodeCount > 0 && networkNodeCount < 10)">
-                <span class="label">展示 Top-K:</span>
-                <select v-model.number="topK" class="topk-select">
-                  <option :value="10">Top-10</option>
-                  <option :value="20">Top-20</option>
-                  <option :value="50">Top-50</option>
-                  <option :value="100">Top-100</option>
-                </select>
-                <span class="topk-hint">当前展示 {{ effectiveTopK }} 条</span>
-              </div>
-
-              <div class="summary-item" v-else>
-                <span class="label">展示范围:</span>
-                <span class="value">全部</span>
-              </div>
+          <div class="modal-body">
+            <div v-if="loadingExistingFiles" class="loading-state">
+              <p>加载文件列表中...</p>
             </div>
-
-            <div class="table-wrapper">
-              <table class="results-table">
-                <thead>
-                  <tr>
-                    <th>序号</th>
-                    <th>节点</th>
-                    <th>识别结果</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(result, index) in displayedResults" :key="index">
-                    <td>{{ index + 1 }}</td>
-                    <td class="data-cell">{{ result.input }}</td>
-                    <td class="result-cell">{{ formatResultValue(result.output) }}</td>
-
-                  </tr>
-                </tbody>
-              </table>
+            <div v-else-if="existingFilesError" class="error-state">
+              <p>{{ existingFilesError }}</p>
+              <button @click="loadExistingFiles" class="retry-btn">重试</button>
             </div>
-
-            <div class="action-buttons">
-              <button @click="exportResults" class="btn btn-primary">
-                导出结果
-              </button>
-              <button @click="clearResults" class="btn btn-secondary">
-                清空结果
-              </button>
-            </div>
-          </div>
-
-          <!-- 空状态 -->
-          <div v-else class="empty-state">
-            <p>暂无识别结果</p>
-            <p class="hint">选择文件和算法后，点击"开始识别"按钮</p>
+            <template v-else>
+              <div class="existing-filter-bar">
+                <input 
+                  v-model="existingSearch" 
+                  type="text" 
+                  class="existing-search-input" 
+                  placeholder="搜索已有文件名或类型..."
+                />
+              </div>
+              <div v-if="totalExistingFiles === 0" class="empty-state">
+                <p>暂无可用文件</p>
+              </div>
+              <div v-else class="files-list" ref="filesListRef">
+                <div 
+                  v-for="file in displayedExistingFiles" 
+                  :key="file.id"
+                  class="file-item"
+                  :class="{ selected: tempSelectedFile?.id === file.id }"
+                  @click="selectTempFileAndClose(file)"
+                >
+                  <div class="file-info">
+                    <div class="file-name">{{ getFileNameWithoutExt(file.original_name) }}</div>
+                    <div class="file-meta">
+                      <span class="file-type">{{ getFileExtension(file.original_name) }}</span>
+                      <span class="file-size">{{ formatFileSize(file.size_bytes) }}</span>
+                      <span class="file-date">{{ formatDate(file.created_at) }}</span>
+                    </div>
+                  </div>
+                  <div class="file-checkbox">
+                    <input 
+                      type="radio" 
+                      :checked="tempSelectedFile?.id === file.id"
+                      @change="selectTempFileAndClose(file)"
+                    />
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -302,6 +318,10 @@ export default {
     }
     
     const selectedAlgorithm = ref('')
+
+    // 算法提示（hover 时展示，离开隐藏）
+    const showAlgoTooltip = ref(false)
+    const currentAlgoDescription = ref('')
 
     // 错误弹窗
     const showErrorModal = ref(false)
@@ -510,6 +530,11 @@ export default {
     }
 
     // 搜索变化时，重置分页并重算显示，保持滚动容器在顶部，并保证可滚动
+    watch(selectedAlgorithm, (v) => {
+      // 选中算法后，预先准备好 hover 展示内容
+      currentAlgoDescription.value = v ? getAlgorithmFullDescription(v) : ''
+    })
+
     watch(existingSearch, async () => {
       if (showFileModal.value) {
         currentFilesPage.value = 1
@@ -629,18 +654,12 @@ export default {
       }
     }
 
-    const getAlgorithmDescription = () => {
-      const algo = algorithms.value.find(a => a.algo_key == selectedAlgorithm.value)
-      return (algo?.description || '').trim() || '暂无描述'
+    const getAlgorithmFullDescription = (algoKey) => {
+      const algo = algorithms.value.find(a => a.algo_key == algoKey)
+      const desc = String(algo?.description || '').trim()
+      return desc || '暂无描述'
     }
 
-    const getAlgorithmParams = () => {
-      const algo = algorithms.value.find(a => a.algo_key == selectedAlgorithm.value)
-      if (!algo) return ''
-      const typeText = algo.type ? `类型: ${algo.type}` : ''
-      const statusText = `状态: ${algo.status === 'active' ? '启用' : '禁用'}`
-      return [typeText, statusText].filter(Boolean).join('；')
-    }
 
     const stopPolling = () => {
       if (pollTimer.value) {
@@ -806,6 +825,16 @@ export default {
       statusMessage.value = ''
     }
 
+    const handleAlgoSelectMouseEnter = () => {
+      if (selectedAlgorithm.value) {
+        showAlgoTooltip.value = true
+      }
+    }
+
+    const handleAlgoSelectMouseLeave = () => {
+      showAlgoTooltip.value = false
+    }
+
     return {
       selectedExistingFile,
       existingFiles,
@@ -844,8 +873,10 @@ export default {
       getFileExtension,
       formatFileSize,
       formatDate,
-      getAlgorithmDescription,
-      getAlgorithmParams,
+      showAlgoTooltip,
+      currentAlgoDescription,
+      handleAlgoSelectMouseEnter,
+      handleAlgoSelectMouseLeave,
       startIdentification,
       resetForm,
       exportResults,
@@ -891,9 +922,17 @@ export default {
 }
 
 .content-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.top-row,
+.bottom-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+  align-items: start;
 }
 
 .card {
@@ -1151,6 +1190,17 @@ input[type="range"] {
   display: flex;
   gap: 12px;
   margin-top: 20px;
+}
+
+.middle-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.middle-actions .btn {
+  flex: 0 0 auto;
+  min-width: 160px;
 }
 
 .btn {
@@ -1559,6 +1609,27 @@ input[type="range"] {
   outline: none;
   border-color: #1677ff;
   box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
+.algorithm-select-wrapper {
+  position: relative;
+}
+
+.algorithm-tooltip {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  width: 100%;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  z-index: 20;
+  white-space: pre-wrap;
 }
 
 @media (max-width: 1200px) {
