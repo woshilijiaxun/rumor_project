@@ -14,22 +14,31 @@
     </div>
 
     <div class="history-content">
-      <div v-if="filteredTasks.length === 0" class="empty-state">
+      <div v-if="loading" class="empty-state">
+        <p>加载中...</p>
+      </div>
+
+      <div v-else-if="error" class="empty-state" style="color:#ef4444;">
+        <p>{{ error }}</p>
+        <button @click="refreshTasks" class="refresh-btn" style="margin-top:12px;">重试</button>
+      </div>
+
+      <div v-else-if="filteredTasks.length === 0" class="empty-state">
         <p>暂无任务历史</p>
       </div>
 
       <div v-else class="tasks-list">
-        <div v-for="task in filteredTasks" :key="task.id" class="task-item">
+        <div v-for="task in filteredTasks" :key="task.task_id || task.id" class="task-item">
           <div class="task-info">
-            <div class="task-title">{{ task.name }}</div>
+            <div class="task-title">{{ getTaskTitle(task) }}</div>
             <div class="task-meta">
               <span class="meta-item">
                 <span class="label">算法:</span>
-                <span class="value">{{ task.algorithmName }}</span>
+                <span class="value">{{ task.algorithmName || task.algorithm_key || task.algo_key || '-' }}</span>
               </span>
               <span class="meta-item">
                 <span class="label">时间:</span>
-                <span class="value">{{ formatTime(task.createdAt) }}</span>
+                <span class="value">{{ formatTime(task.createdAt || task.created_at) }}</span>
               </span>
               <span class="meta-item">
                 <span class="label">数据量:</span>
@@ -38,23 +47,8 @@
             </div>
           </div>
 
-          <div class="task-stats">
-            <div class="stat">
-              <span class="stat-label">成功</span>
-              <span class="stat-value success">{{ task.successCount }}</span>
-            </div>
-            <div class="stat">
-              <span class="stat-label">失败</span>
-              <span class="stat-value error">{{ task.failureCount }}</span>
-            </div>
-            <div class="stat">
-              <span class="stat-label">置信度</span>
-              <span class="stat-value">{{ task.avgConfidence }}</span>
-            </div>
-          </div>
-
           <div class="task-status">
-            <span :class="['status-badge', task.status]">
+            <span :class="['status-badge', normalizeStatus(task.status)]">
               {{ getStatusText(task.status) }}
             </span>
           </div>
@@ -91,6 +85,7 @@
 
 <script>
 import { ref, computed } from 'vue'
+import { identificationService } from '../services/identificationService'
 
 export default {
   name: 'TaskHistory',
@@ -106,6 +101,14 @@ export default {
     currentPage: {
       type: Number,
       default: 1
+    },
+    loading: {
+      type: Boolean,
+      default: false
+    },
+    error: {
+      type: String,
+      default: ''
     }
   },
   emits: ['view-details', 'download', 'delete', 'page-change', 'refresh'],
@@ -124,18 +127,38 @@ export default {
     })
 
     const formatTime = (timestamp) => {
-      const date = new Date(timestamp)
-      return date.toLocaleString('zh-CN')
+      if (!timestamp) return '-';
+      const date = new Date(timestamp);
+      return date.toLocaleString('zh-CN');
+    }
+    
+    const getTaskTitle = (task) => {
+      // 优先使用文件原名，如果没有则显示算法+时间
+      if (task.file_name) return task.file_name;
+      if (task.original_name) return task.original_name;
+      // 兜底：仍然显示 task_id，避免误显示算法名
+      return task.task_id || task.id || '-';
+    }
+
+    const normalizeStatus = (status) => {
+      const s = String(status || '').toLowerCase()
+      // 兼容后端常见状态：queued/running/succeeded/failed/cancelled
+      if (s === 'succeeded' || s === 'success' || s === 'completed') return 'completed'
+      if (s === 'running' || s === 'processing' || s === 'queued' || s === 'pending') return 'processing'
+      if (s === 'failed' || s === 'error') return 'failed'
+      if (s === 'cancelled' || s === 'canceled') return 'cancelled'
+      return s || 'processing'
     }
 
     const getStatusText = (status) => {
+      const norm = normalizeStatus(status)
       const statusMap = {
-        'completed': '已完成',
-        'processing': '处理中',
-        'failed': '失败',
-        'cancelled': '已取消'
+        completed: '已完成',
+        processing: '处理中',
+        failed: '失败',
+        cancelled: '已取消'
       }
-      return statusMap[status] || status
+      return statusMap[norm] || String(status || '-')
     }
 
     const viewDetails = (task) => {
@@ -146,9 +169,21 @@ export default {
       emit('download', task)
     }
 
-    const deleteTask = (task) => {
-      if (confirm(`确定要删除任务 "${task.name}" 吗？`)) {
-        emit('delete', task)
+    const deleteTask = async (task) => {
+      const title = getTaskTitle(task)
+      if (!confirm(`确定要删除任务 "${title}" 吗？`)) return
+
+      try {
+        const taskId = task?.task_id || task?.id
+        if (!taskId) {
+          alert('任务ID缺失，无法删除')
+          return
+        }
+        await identificationService.deleteTask(taskId)
+        // 删除成功后直接刷新列表（父组件已有 refresh 逻辑）
+        emit('refresh')
+      } catch (e) {
+        alert(e?.message || '删除失败，请稍后重试')
       }
     }
 
@@ -172,7 +207,9 @@ export default {
       searchKeyword,
       filteredTasks,
       formatTime,
+      normalizeStatus,
       getStatusText,
+      getTaskTitle,
       viewDetails,
       downloadResults,
       deleteTask,
@@ -343,7 +380,9 @@ export default {
 }
 
 .task-status {
-  min-width: 80px;
+  min-width: 120px;
+  display: flex;
+  justify-content: center;
 }
 
 .status-badge {

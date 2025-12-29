@@ -4,6 +4,7 @@ from application.common.auth import require_auth
 from application.common.responses import ok, fail
 from application.services import uploads_service
 from application.services.graph_service import parse_graph_from_file
+from application.repositories import graph_cache_repo
 
 bp = Blueprint('network', __name__)
 
@@ -17,15 +18,44 @@ def get_network_graph():
             return fail('缺少参数: file_id', http_code=400)
 
         # 可选：限制最大边数，避免超大图压垮前端
-        # 不截断：默认不限制；如传入 max_edges 且 >0 则按该值限制
+        # 默认：历史/详情页希望快速展示，因此默认 max_edges=10000
         max_edges = request.args.get('max_edges', type=int)
         if isinstance(max_edges, int):
             if max_edges <= 0:
-                max_edges = None
+                max_edges = 10000
             else:
                 max_edges = min(max_edges, 100000)
         else:
-            max_edges = None
+            max_edges = 10000
+
+        force = request.args.get('force', default=0, type=int)
+        graph_version = 'v1'
+
+        # 文件级缓存（拓扑只由文件决定）
+        if not force:
+            try:
+                cached = graph_cache_repo.get_cached_graph(file_id=file_id, graph_version=graph_version, max_edges=max_edges)
+                if cached and cached.get('graph_json'):
+                    graph_raw = cached.get('graph_json')
+                    meta_raw = cached.get('meta_json')
+
+                    import json
+                    graph_obj = json.loads(graph_raw) if isinstance(graph_raw, (str, bytes)) else graph_raw
+                    meta_obj = json.loads(meta_raw) if isinstance(meta_raw, (str, bytes)) else (meta_raw or {})
+
+                    return ok({
+                        'file': {
+                            'id': file_id
+                        },
+                        'graph': graph_obj,
+                        'cache': {
+                            'hit': True,
+                            'updated_at': str(cached.get('updated_at') or '')
+                        }
+                    })
+            except Exception:
+                # 缓存失败不影响主流程
+                pass
 
         row = uploads_service.get_upload_record(file_id)
         if not row:
@@ -46,6 +76,19 @@ def get_network_graph():
 
         graph = parse_graph_from_file(abs_path=abs_path, ext=ext, max_edges=max_edges)
 
+        # 写入缓存（失败不影响返回）
+        try:
+            meta = graph.get('meta') or {}
+            graph_cache_repo.upsert_cached_graph(
+                file_id=file_id,
+                graph=graph,
+                meta=meta,
+                graph_version=graph_version,
+                max_edges=max_edges
+            )
+        except Exception:
+            pass
+
         return ok({
             'file': {
                 'id': row['id'],
@@ -55,7 +98,10 @@ def get_network_graph():
                 'size_bytes': row.get('size_bytes'),
                 'storage_path': row.get('storage_path', ''),
             },
-            'graph': graph
+            'graph': graph,
+            'cache': {
+                'hit': False
+            }
         })
     except FileNotFoundError:
         return fail('文件不存在', http_code=404)

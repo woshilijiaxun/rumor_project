@@ -8,6 +8,7 @@ import AlgorithmsPage from '../modules/algorithms/AlgorithmsPage.vue'
 import FilesPage from '../modules/files/FilesPage.vue'
 import SettingsPage from '../modules/settings/SettingsPage.vue'
 import IdentificationPage from '../modules/identification/IdentificationPage.vue'
+import IdentificationHistoryDetailPage from '../modules/identification/IdentificationHistoryDetailPage.vue'
 
 const routes = [
   { path: '/', redirect: '/login' },
@@ -23,6 +24,7 @@ const routes = [
       { path: 'algorithms', component: AlgorithmsPage },
       { path: 'files', component: FilesPage },
       { path: 'identification', component: IdentificationPage },
+      { path: 'identification/history/:taskId', component: IdentificationHistoryDetailPage },
       { path: 'settings', component: SettingsPage },
       { path: 'home', redirect: '/dashboard' },
       { path: '', redirect: '/dashboard' }
@@ -37,7 +39,7 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach((to, _from, next) => {
   const token = (typeof window !== 'undefined') ? localStorage.getItem('token') : null
   if (to.matched.some(r => r.meta && r.meta.requiresAuth) && !token) {
     const redirect = encodeURIComponent(to.fullPath || '/dashboard')

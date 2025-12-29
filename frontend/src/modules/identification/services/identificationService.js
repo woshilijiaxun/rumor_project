@@ -34,6 +34,17 @@ export const identificationService = {
     return data
   },
 
+  async getTasks({ page = 1, page_size = 20 } = {}) {
+    const response = await fetch(`${API_BASE_URL}/tasks?page=${encodeURIComponent(page)}&page_size=${encodeURIComponent(page_size)}` , {
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` }
+    })
+    const data = await response.json().catch(() => null)
+    if (!response.ok || data?.status !== 'success') {
+      throw new Error(data?.message || `获取任务列表失败 (HTTP ${response.status})`)
+    }
+    return data
+  },
+
   async getTask(taskId) {
     const response = await fetch(`${API_BASE_URL}/tasks/${encodeURIComponent(taskId)}`, {
       headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` }
@@ -64,6 +75,18 @@ export const identificationService = {
     const data = await response.json().catch(() => null)
     if (!response.ok || data?.status !== 'success') {
       throw new Error(data?.message || `取消任务失败 (HTTP ${response.status})`)
+    }
+    return data
+  },
+
+  async deleteTask(taskId) {
+    const response = await fetch(`${API_BASE_URL}/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` }
+    })
+    const data = await response.json().catch(() => null)
+    if (!response.ok || data?.status !== 'success') {
+      throw new Error(data?.message || `删除任务失败 (HTTP ${response.status})`)
     }
     return data
   }

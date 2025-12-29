@@ -7,8 +7,13 @@
       @close="closeErrorModal"
     />
     <div class="page-header">
-      <h1>识别计算</h1>
-      <p class="subtitle">上传数据并使用算法进行识别计算</p>
+      <div class="header-row">
+        <div>
+          <h1>识别计算</h1>
+          <p class="subtitle">上传数据并使用算法进行识别计算</p>
+        </div>
+        <button class="history-btn" type="button" @click="openHistoryModal">识别历史</button>
+      </div>
     </div>
 
     <div class="content-wrapper">
@@ -268,20 +273,36 @@
         </div>
       </div>
     </div>
+    <TaskHistoryModal
+      v-if="showHistoryModal"
+      :tasks="historyTasks"
+      :total-pages="historyTotalPages"
+      :current-page="historyPage"
+      :loading="historyLoading"
+      :error="historyError"
+      @close="closeHistoryModal"
+      @refresh="onHistoryRefresh"
+      @page-change="onHistoryPageChange"
+      @view-details="onHistoryViewDetails"
+      @delete="onHistoryDelete"
+    />
   </div>
 </template>
 
 <script>
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import axios from 'axios'
 import GraphView from './components/GraphView.vue'
 import ErrorModal from './components/ErrorModal.vue'
+import TaskHistoryModal from './components/TaskHistoryModal.vue'
 import { identificationService } from './services/identificationService'
 
 export default {
   name: 'IdentificationPage',
-  components: { GraphView, ErrorModal },
+  components: { GraphView, ErrorModal, TaskHistoryModal },
   setup() {
+    const router = useRouter()
     const selectedExistingFile = ref(null)
     const existingFiles = ref([]) // 后端返回的所有文件（本页最多100条）
     const displayedExistingFiles = ref([]) // 当前显示的文件（分页后）
@@ -322,6 +343,15 @@ export default {
     // 算法提示（hover 时展示，离开隐藏）
     const showAlgoTooltip = ref(false)
     const currentAlgoDescription = ref('')
+
+    // 历史记录弹窗
+    const showHistoryModal = ref(false)
+    const historyLoading = ref(false)
+    const historyError = ref('')
+    const historyTasks = ref([])
+    const historyPage = ref(1)
+    const historyPageSize = 20
+    const historyTotalPages = ref(1)
 
     // 错误弹窗
     const showErrorModal = ref(false)
@@ -521,6 +551,70 @@ export default {
       el.addEventListener('scroll', onFilesListScroll, { passive: true })
       // 初次进入或内容较少时，自动填充到可滚动或无更多
       await ensureListScrollable()
+    }
+
+    // 历史任务列表加载
+    const loadHistoryTasks = async () => {
+      historyLoading.value = true
+      historyError.value = ''
+      try {
+        const res = await identificationService.getTasks({
+          page: historyPage.value,
+          page_size: historyPageSize
+        })
+        // 兼容返回结构：data.items 或 data.data.items
+        const payload = res?.data || res?.data?.data || res?.data
+        const items = Array.isArray(payload?.items) ? payload.items : (Array.isArray(payload) ? payload : [])
+        historyTasks.value = items
+
+        const totalPages = Number(payload?.total_pages)
+        if (Number.isFinite(totalPages) && totalPages > 0) {
+          historyTotalPages.value = totalPages
+        } else {
+          // 若后端没给 total_pages，退化为 1
+          historyTotalPages.value = 1
+        }
+      } catch (e) {
+        historyError.value = (e?.message || '加载历史记录失败').trim()
+        historyTasks.value = []
+        historyTotalPages.value = 1
+      } finally {
+        historyLoading.value = false
+      }
+    }
+
+    const openHistoryModal = async () => {
+      showHistoryModal.value = true
+      historyPage.value = 1
+      await loadHistoryTasks()
+    }
+
+    const closeHistoryModal = () => {
+      showHistoryModal.value = false
+      historyError.value = ''
+    }
+
+    const onHistoryPageChange = async (page) => {
+      const p = Number(page)
+      if (!Number.isFinite(p) || p <= 0) return
+      historyPage.value = p
+      await loadHistoryTasks()
+    }
+
+    const onHistoryRefresh = async () => {
+      await loadHistoryTasks()
+    }
+
+    const onHistoryViewDetails = (task) => {
+      const taskId = task?.task_id || task?.id
+      if (!taskId) return
+      closeHistoryModal()
+      router.push(`/identification/history/${encodeURIComponent(taskId)}`)
+    }
+
+    // 兼容子组件透传的 delete 事件：删除成功后刷新列表
+    const onHistoryDelete = async () => {
+      await loadHistoryTasks()
     }
 
     const detachInfiniteScroll = () => {
@@ -891,7 +985,20 @@ export default {
       showErrorModal,
       errorModalMessage,
       errorModalDetail,
-      closeErrorModal
+      closeErrorModal,
+      // 历史记录
+      openHistoryModal,
+      closeHistoryModal,
+      showHistoryModal,
+      historyTasks,
+      historyPage,
+      historyTotalPages,
+      historyLoading,
+      historyError,
+      onHistoryRefresh,
+      onHistoryPageChange,
+      onHistoryViewDetails,
+      onHistoryDelete
     }
   }
 }
@@ -906,6 +1013,30 @@ export default {
 
 .page-header {
   margin-bottom: 30px;
+}
+
+.header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.history-btn {
+  padding: 8px 14px;
+  border: 1px solid #1677ff;
+  background: #1677ff;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #fff;
+  flex: 0 0 auto;
+  transition: background-color 0.3s, border-color 0.3s;
+}
+
+.history-btn:hover {
+  border-color: #0d5ccc;
+  background: #0d5ccc;
 }
 
 .page-header h1 {

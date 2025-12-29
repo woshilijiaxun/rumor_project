@@ -94,6 +94,59 @@ def create_tables():
         cursor.execute(create_algorithms_table)
         print("✓ 算法表创建成功或已存在")
 
+        # 创建识别任务表（历史）
+        create_identification_tasks_table = """
+        CREATE TABLE IF NOT EXISTS identification_tasks (
+            task_id VARCHAR(64) PRIMARY KEY,
+            user_id INT NOT NULL,
+            file_id INT NOT NULL,
+            algorithm_key VARCHAR(64) NOT NULL,
+            params JSON NULL,
+            status VARCHAR(20) NOT NULL,
+            progress INT DEFAULT 0,
+            stage VARCHAR(50) DEFAULT '',
+            message VARCHAR(255) DEFAULT '',
+            error JSON NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            started_at TIMESTAMP NULL,
+            ended_at TIMESTAMP NULL,
+            INDEX idx_user_created_at (user_id, created_at),
+            INDEX idx_file_id (file_id),
+            INDEX idx_status (status),
+            CONSTRAINT fk_ident_tasks_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_ident_tasks_file FOREIGN KEY (file_id) REFERENCES uploads(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """
+        cursor.execute(create_identification_tasks_table)
+        print("✓ 识别任务表创建成功或已存在")
+
+        # 创建识别结果表
+        create_identification_results_table = """
+        CREATE TABLE IF NOT EXISTS identification_task_results (
+            task_id VARCHAR(64) PRIMARY KEY,
+            result JSON NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_ident_results_task FOREIGN KEY (task_id) REFERENCES identification_tasks(task_id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """
+        cursor.execute(create_identification_results_table)
+        print("✓ 识别任务结果表创建成功或已存在")
+
+        # 创建文件拓扑缓存表（拓扑只由文件决定）
+        create_file_graph_cache_table = """
+        CREATE TABLE IF NOT EXISTS file_graph_cache (
+            file_id INT PRIMARY KEY,
+            graph_json JSON NOT NULL,
+            meta_json JSON NULL,
+            graph_version VARCHAR(32) NOT NULL DEFAULT 'v1',
+            max_edges INT NOT NULL DEFAULT 10000,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT fk_graph_cache_file FOREIGN KEY (file_id) REFERENCES uploads(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """
+        cursor.execute(create_file_graph_cache_table)
+        print("✓ 文件拓扑缓存表创建成功或已存在")
+
         # 插入测试用户（如果不存在）
         check_user = "SELECT COUNT(*) as count FROM users WHERE username = 'admin'"
         cursor.execute(check_user)
