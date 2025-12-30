@@ -121,12 +121,27 @@
             </div>
             <div v-else-if="visualData" class="visual-content">
               <div class="visual-meta">
-                <span>文件：{{ getFileNameWithoutExt(visualData?.file?.original_name) }}</span>
-                <span>节点：{{ visualData?.graph?.meta?.nodes || 0 }}</span>
-                <span>边：{{ visualData?.graph?.meta?.edges || 0 }}</span>
-                <span v-if="visualData?.graph?.meta?.truncated" class="warning">已截断至 {{ visualData?.graph?.meta?.max_edges }} 条边</span>
+                <div class="visual-meta-left">
+                  <button
+                    class="non-topk-toggle"
+                    type="button"
+                    :aria-pressed="nonTopKGray"
+                    @click="toggleNonTopKGray"
+                    :title="nonTopKGray ? '当前：非Top-K置灰（点击恢复蓝色）' : '当前：非Top-K蓝色（点击置灰）'"
+                  >
+                    <span class="toggle-dot" :class="{ on: nonTopKGray }"></span>
+                    <span class="toggle-text">非Top-K{{ nonTopKGray ? '置灰' : '蓝色' }}</span>
+                  </button>
+                </div>
+
+                <div class="visual-meta-right">
+                  <span>文件：{{ getFileNameWithoutExt(selectedExistingFile?.original_name || visualData?.file?.original_name) }}</span>
+                  <span>节点：{{ visualData?.graph?.meta?.nodes || 0 }}</span>
+                  <span>边：{{ visualData?.graph?.meta?.edges || 0 }}</span>
+                  <span v-if="visualData?.graph?.meta?.truncated" class="warning">已截断至 {{ visualData?.graph?.meta?.max_edges }} 条边</span>
+                </div>
               </div>
-              <GraphView v-if="visualData?.graph" :graph="visualData.graph" height="480px" />
+              <GraphView v-if="visualData?.graph" :graph="visualData.graph" :highlight-map="topKHighlightMap" :non-topk-gray="nonTopKGray" height="480px" />
               <div class="action-buttons">
                 <button class="btn btn-secondary" @click="clearVisualization">清空</button>
               </div>
@@ -184,6 +199,7 @@
                       <th>序号</th>
                       <th>节点</th>
                       <th>识别结果</th>
+                      <th>重要程度</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -191,6 +207,10 @@
                       <td>{{ index + 1 }}</td>
                       <td class="data-cell">{{ result.input }}</td>
                       <td class="result-cell">{{ formatResultValue(result.output) }}</td>
+                      <td class="importance-cell">
+                        <span class="importance-dot" :style="{ backgroundColor: getImportanceColor(result.output) }"></span>
+                        <span class="importance-text">{{ getImportanceText(result.output) }}</span>
+                      </td>
 
                     </tr>
                   </tbody>
@@ -433,6 +453,41 @@ export default {
       return n.toFixed(4)
     }
 
+    // 重要程度（与详情页同一套逻辑）
+    const getImportanceLevel = (v) => {
+      const n = Number(v)
+      if (!Number.isFinite(n)) return 0
+      const list = sortedResults.value
+      if (!list || list.length === 0) return 0
+      const maxV = Number(list[0]?.output)
+      const minV = Number(list[list.length - 1]?.output)
+      if (!Number.isFinite(maxV) || !Number.isFinite(minV)) return 0
+      if (maxV === minV) return 3
+      const ratio = (n - minV) / (maxV - minV)
+      if (ratio >= 0.75) return 4
+      if (ratio >= 0.5) return 3
+      if (ratio >= 0.25) return 2
+      return 1
+    }
+
+    const getImportanceColor = (v) => {
+      const level = getImportanceLevel(v)
+      if (level === 4) return '#ef4444'
+      if (level === 3) return '#f59e0b'
+      if (level === 2) return '#eab308'
+      if (level === 1) return '#10b981'
+      return '#9ca3af'
+    }
+
+    const getImportanceText = (v) => {
+      const level = getImportanceLevel(v)
+      if (level === 4) return '高'
+      if (level === 3) return '较高'
+      if (level === 2) return '中'
+      if (level === 1) return '低'
+      return '-'
+    }
+
     const sortedResults = computed(() => {
       const arr = Array.isArray(results.value) ? results.value.slice() : []
       arr.sort((a, b) => {
@@ -465,6 +520,33 @@ export default {
     const displayedResults = computed(() => {
       return sortedResults.value.slice(0, effectiveTopK.value)
     })
+
+    // 左侧图 Top-K 高亮映射：key=nodeId(String)，value=颜色（与右侧“重要程度”一致）
+    // 严格按 nodeId 精确匹配：只有图中存在该节点 id 才会染色；否则忽略，避免乱染。
+    const graphNodeIdSet = computed(() => {
+      const nodes = visualData.value?.graph?.nodes || []
+      const set = new Set()
+      nodes.forEach(n => set.add(String(n.id)))
+      return set
+    })
+
+    // 默认：首次可视化时非Top-K节点显示为蓝色
+    const nonTopKGray = ref(false)
+
+    const topKHighlightMap = computed(() => {
+      const map = {}
+      const set = graphNodeIdSet.value
+      displayedResults.value.forEach((r) => {
+        const nodeId = String(r.input)
+        if (!set.has(nodeId)) return
+        map[nodeId] = getImportanceColor(r.output)
+      })
+      return map
+    })
+
+    const toggleNonTopKGray = () => {
+      nonTopKGray.value = !nonTopKGray.value
+    }
 
     const hasMoreExistingFiles = computed(() => {
       return displayedExistingFiles.value.length < totalExistingFiles.value
@@ -982,6 +1064,8 @@ export default {
       topK,
       effectiveTopK,
       formatResultValue,
+      getImportanceColor,
+      getImportanceText,
       showErrorModal,
       errorModalMessage,
       errorModalDetail,
@@ -998,7 +1082,10 @@ export default {
       onHistoryRefresh,
       onHistoryPageChange,
       onHistoryViewDetails,
-      onHistoryDelete
+      onHistoryDelete,
+      topKHighlightMap,
+      nonTopKGray,
+      toggleNonTopKGray
     }
   }
 }
@@ -1507,6 +1594,24 @@ input[type="range"] {
   color: #1f2937;
 }
 
+.importance-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.importance-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.importance-text {
+  font-size: 12px;
+  color: #4b5563;
+}
+
 .confidence-bar {
   display: inline-block;
   width: 60px;
@@ -1622,10 +1727,84 @@ input[type="range"] {
 }
 .visual-meta {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
   font-size: 12px;
   color: #6b7280;
   margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.visual-meta-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.visual-meta-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* 更精致的开关样式（不占一整行，不会像大按钮一样突兀） */
+.non-topk-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #374151;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.non-topk-toggle:hover {
+  border-color: #cbd5e1;
+  background: #f9fafb;
+}
+
+.non-topk-toggle:active {
+  transform: translateY(1px);
+}
+
+.non-topk-toggle:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.18);
+  border-color: #93c5fd;
+}
+
+.toggle-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #1677ff; /* 蓝色状态 */
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+}
+
+.toggle-dot.on {
+  background: #9ca3af; /* 置灰状态 */
+}
+
+.toggle-text {
+  font-weight: 600;
+}
+
+@media (max-width: 520px) {
+  .visual-meta {
+    align-items: flex-start;
+  }
+  .visual-meta-right {
+    justify-content: flex-start;
+  }
 }
 .visual-placeholder {
   border: 1px dashed #d1d5db;

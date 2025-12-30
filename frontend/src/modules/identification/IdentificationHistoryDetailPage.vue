@@ -13,7 +13,10 @@
           <h1>识别历史详情</h1>
           <p class="subtitle">任务：{{ taskId }}</p>
         </div>
-        <button class="back-btn" type="button" @click="goBack">返回</button>
+        <div class="header-actions-right">
+          <button class="back-btn refresh-btn" type="button" @click="reloadAll">刷新</button>
+          <button class="back-btn" type="button" @click="goBack">返回</button>
+        </div>
       </div>
     </div>
 
@@ -50,19 +53,10 @@
             <div class="k">状态</div>
             <div class="v">{{ task?.status || '-' }}</div>
           </div>
-          <div class="kv" v-if="task?.params">
-            <div class="k">参数</div>
-            <div class="v"><pre class="pre">{{ prettyJson(task?.params) }}</pre></div>
-          </div>
         </div>
       </div>
 
-      <div class="middle-actions">
-        <button class="btn btn-primary" type="button" :disabled="!fileId" @click="visualize">
-          可视化网络
-        </button>
-        <button class="btn btn-secondary" type="button" @click="reloadAll">刷新</button>
-      </div>
+      <!-- middle-actions 已移除：进入页面会自动可视化，刷新按钮已移至右上角 -->
 
       <div class="bottom-row">
         <!-- 左：拓扑 -->
@@ -78,15 +72,37 @@
             </div>
             <div v-else-if="visualData" class="visual-content">
               <div class="visual-meta">
-                <span>节点：{{ visualData?.graph?.meta?.nodes || 0 }}</span>
-                <span>边：{{ visualData?.graph?.meta?.edges || 0 }}</span>
-                <span v-if="visualData?.graph?.meta?.truncated" class="warning">已截断至 {{ visualData?.graph?.meta?.max_edges }} 条边</span>
+                <div class="visual-meta-left">
+                  <button
+                    class="non-topk-toggle"
+                    type="button"
+                    :aria-pressed="nonTopkGray"
+                    @click="toggleNonTopKGray"
+                    :title="nonTopkGray ? '当前：非Top-K置灰（点击恢复蓝色）' : '当前：非Top-K蓝色（点击置灰）'"
+                  >
+                    <span class="toggle-dot" :class="{ on: nonTopkGray }"></span>
+                    <span class="toggle-text">非Top-K{{ nonTopkGray ? '置灰' : '蓝色' }}</span>
+                  </button>
+                </div>
+
+                <div class="visual-meta-right">
+                  <span>节点：{{ visualData?.graph?.meta?.nodes || 0 }}</span>
+                  <span>边：{{ visualData?.graph?.meta?.edges || 0 }}</span>
+                  <span v-if="visualData?.graph?.meta?.truncated" class="warning">已截断至 {{ visualData?.graph?.meta?.max_edges }} 条边</span>
+                </div>
               </div>
-              <GraphView v-if="visualData?.graph" :graph="visualData.graph" height="480px" />
+
+              <GraphView
+                v-if="visualData?.graph"
+                :graph="visualData.graph"
+                :highlight-map="highlightMap"
+                :non-topk-gray="nonTopkGray"
+                height="480px"
+              />
             </div>
             <div v-else class="empty-state">
               <p>暂无网络拓扑</p>
-              <p class="hint">点击上方“可视化网络”查看</p>
+              <p class="hint">进入页面后会自动加载可视化</p>
             </div>
           </div>
         </div>
@@ -109,6 +125,33 @@
             </div>
 
             <div v-else-if="results.length > 0" class="results-section">
+              <div class="results-summary" :class="{ 'is-single': networkNodeCount > 0 && networkNodeCount < 10 }">
+                <div class="summary-item">
+                  <span class="label">网络总节点数:</span>
+                  <span class="value">{{ networkNodeCount }}</span>
+                </div>
+
+                <div class="summary-item topk-item" v-if="!(networkNodeCount > 0 && networkNodeCount < 10)">
+                  <span class="label">展示 Top-K:</span>
+                  <select v-model.number="topK" class="topk-select">
+                    <option :value="10">Top-10</option>
+                    <option :value="20">Top-20</option>
+                    <option :value="50">Top-50</option>
+                    <option :value="100">Top-100</option>
+                  </select>
+                  <span class="topk-hint">当前展示 {{ effectiveTopK }} 条</span>
+
+
+                </div>
+
+                <div class="summary-item" v-else>
+                  <span class="label">展示范围:</span>
+                  <span class="value">全部</span>
+
+
+                </div>
+              </div>
+
               <div class="table-wrapper">
                 <table class="results-table">
                   <thead>
@@ -116,13 +159,18 @@
                       <th>序号</th>
                       <th>节点</th>
                       <th>识别结果</th>
+                      <th>重要程度</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="(r, i) in results" :key="i">
+                    <tr v-for="(r, i) in displayedResults" :key="i">
                       <td>{{ i + 1 }}</td>
                       <td class="data-cell">{{ r.input }}</td>
                       <td class="result-cell">{{ formatResultValue(r.output) }}</td>
+                      <td class="importance-cell">
+                        <span class="importance-dot" :style="{ backgroundColor: getImportanceColor(r.output) }"></span>
+                        <span class="importance-text">{{ getImportanceText(r.output) }}</span>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -170,6 +218,71 @@ export default {
     const visualLoading = ref(false)
     const visualError = ref('')
     const visualData = ref(null)
+
+    // Top-K and sorting
+    const topK = ref(10)
+
+    // 与主页面一致：默认非Top-K为蓝色；可切换置灰
+    const nonTopkGray = ref(false)
+
+    const networkNodeCount = computed(() => {
+      const fromGraph = visualData.value?.graph?.meta?.nodes
+      if (Number.isFinite(Number(fromGraph))) return Number(fromGraph)
+      return results.value.length
+    })
+
+    const sortedResults = computed(() => {
+      const arr = Array.isArray(results.value) ? results.value.slice() : []
+      arr.sort((a, b) => {
+        const av = Number(a?.output)
+        const bv = Number(b?.output)
+        const aNum = Number.isFinite(av) ? av : -Infinity
+        const bNum = Number.isFinite(bv) ? bv : -Infinity
+        return bNum - aNum
+      })
+      return arr
+    })
+
+    const effectiveTopK = computed(() => {
+      const total = sortedResults.value.length
+      if (total <= 0) return 0
+      const baseDefault = networkNodeCount.value > 0 ? Math.min(10, networkNodeCount.value) : Math.min(10, total)
+
+      const k = Number(topK.value)
+      const desired = Number.isFinite(k) && k > 0 ? k : baseDefault
+
+      if (networkNodeCount.value > 0 && networkNodeCount.value < 10) {
+        return total
+      }
+
+      return Math.min(desired, total)
+    })
+
+    const displayedResults = computed(() => {
+      return sortedResults.value.slice(0, effectiveTopK.value)
+    })
+
+    // 给 GraphView 的节点上色映射：{ [nodeId]: color }
+    // 这里沿用你在 GraphView 里现有的机制：有颜色 -> class=topk
+    // 颜色规则：按 output 在 Top-K 内做归一化，从红->橙/黄 的渐变
+    // 左侧图 Top-K 高亮映射：与主页面一致，使用“重要程度”颜色
+    const graphNodeIdSet = computed(() => {
+      const nodes = visualData.value?.graph?.nodes || []
+      const set = new Set()
+      nodes.forEach(n => set.add(String(n.id)))
+      return set
+    })
+
+    const highlightMap = computed(() => {
+      const map = {}
+      const set = graphNodeIdSet.value
+      displayedResults.value.forEach((r) => {
+        const nodeId = String(r.input)
+        if (!set.has(nodeId)) return
+        map[nodeId] = getImportanceColor(r.output)
+      })
+      return map
+    })
 
     const showErrorModal = ref(false)
     const errorModalMessage = ref('')
@@ -220,6 +333,45 @@ export default {
       return n.toFixed(4)
     }
 
+    // 重要程度：用颜色表示（按当前 Top-K 结果做相对归一化）
+    const getImportanceLevel = (v) => {
+      const n = Number(v)
+      if (!Number.isFinite(n)) return 0
+
+      const list = sortedResults.value
+      if (!list || list.length === 0) return 0
+
+      const maxV = Number(list[0]?.output)
+      const minV = Number(list[list.length - 1]?.output)
+      if (!Number.isFinite(maxV) || !Number.isFinite(minV)) return 0
+      if (maxV === minV) return 3
+
+      const ratio = (n - minV) / (maxV - minV) // 0..1
+      if (ratio >= 0.75) return 4
+      if (ratio >= 0.5) return 3
+      if (ratio >= 0.25) return 2
+      return 1
+    }
+
+    const getImportanceColor = (v) => {
+      const level = getImportanceLevel(v)
+      // 4: 高(红) 3: 较高(橙) 2: 中(黄) 1: 低(绿) 0: 无(灰)
+      if (level === 4) return '#ef4444'
+      if (level === 3) return '#f59e0b'
+      if (level === 2) return '#eab308'
+      if (level === 1) return '#10b981'
+      return '#9ca3af'
+    }
+
+    const getImportanceText = (v) => {
+      const level = getImportanceLevel(v)
+      if (level === 4) return '高'
+      if (level === 3) return '较高'
+      if (level === 2) return '中'
+      if (level === 1) return '低'
+      return '-'
+    }
+
     const loadTask = async () => {
       if (!taskId) return
       taskLoading.value = true
@@ -253,19 +405,61 @@ export default {
       }
     }
 
-    const visualize = async () => {
+    const _graphCacheKey = (fid, maxEdges) => {
+      return `graph_cache:v1:file:${fid}:max_edges:${maxEdges}`
+    }
+
+    const _getCachedGraph = (fid, maxEdges) => {
+      try {
+        const raw = sessionStorage.getItem(_graphCacheKey(fid, maxEdges))
+        if (!raw) return null
+        const parsed = JSON.parse(raw)
+        // 简单校验结构
+        if (parsed && typeof parsed === 'object' && parsed.graph) return parsed
+      } catch {
+        // ignore
+      }
+      return null
+    }
+
+    const _setCachedGraph = (fid, maxEdges, data) => {
+      try {
+        sessionStorage.setItem(_graphCacheKey(fid, maxEdges), JSON.stringify(data))
+      } catch {
+        // ignore quota / security error
+      }
+    }
+
+    const visualize = async ({ force = false } = {}) => {
       const fid = fileId.value
       if (!fid) return
+
+      const maxEdges = 10000
+
+      // 1) 前端 session 缓存命中：直接秒开
+      if (!force) {
+        const cached = _getCachedGraph(fid, maxEdges)
+        if (cached) {
+          visualError.value = ''
+          visualLoading.value = false
+          visualData.value = cached
+          return
+        }
+      }
+
+      // 2) 未命中：请求后端（后端也可能命中 DB 缓存）
       visualLoading.value = true
       visualError.value = ''
       visualData.value = null
       try {
         const res = await axios.get(`${apiBaseUrl}/network/graph`, {
-          params: { file_id: fid },
+          params: { file_id: fid, max_edges: maxEdges, force: force ? 1 : 0 },
           headers: { 'Authorization': `Bearer ${token}` }
         })
         if (res.data?.status === 'success') {
           visualData.value = res.data.data
+          // 写入 session 缓存（只缓存 data 部分）
+          _setCachedGraph(fid, maxEdges, res.data.data)
         } else {
           throw new Error(res.data?.message || '可视化加载失败')
         }
@@ -279,6 +473,8 @@ export default {
     const reloadAll = async () => {
       await loadTask()
       await loadResult()
+      // 进入详情页后自动触发可视化（不再需要手动点按钮）
+      await visualize({ force: true })
     }
 
     const goBack = () => {
@@ -286,8 +482,15 @@ export default {
     }
 
     onMounted(async () => {
-      await reloadAll()
+      // 首次进入：优先使用 session 缓存加速（不强制刷新）
+      await loadTask()
+      await loadResult()
+      await visualize({ force: false })
     })
+
+    const toggleNonTopKGray = () => {
+      nonTopkGray.value = !nonTopkGray.value
+    }
 
     return {
       taskId,
@@ -296,6 +499,14 @@ export default {
       resultLoading,
       resultError,
       results,
+      topK,
+      highlightMap,
+      nonTopkGray,
+      toggleNonTopKGray,
+      networkNodeCount,
+      sortedResults,
+      displayedResults,
+      effectiveTopK,
       visualLoading,
       visualError,
       visualData,
@@ -307,6 +518,8 @@ export default {
       formatDate,
       prettyJson,
       formatResultValue,
+      getImportanceColor,
+      getImportanceText,
       showErrorModal,
       errorModalMessage,
       errorModalDetail,
@@ -332,6 +545,12 @@ export default {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.header-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .page-header h1 {
@@ -361,6 +580,19 @@ export default {
   border-color: #1677ff;
   color: #1677ff;
   background: #f0f7ff;
+}
+
+/* 刷新按钮与返回按钮等尺寸，但用蓝色主按钮样式 */
+.refresh-btn {
+  background: #1677ff;
+  border-color: #1677ff;
+  color: #fff;
+}
+
+.refresh-btn:hover {
+  background: #0d5ccc;
+  border-color: #0d5ccc;
+  color: #fff;
 }
 
 .content-wrapper {
@@ -479,8 +711,14 @@ export default {
   color: #9ca3af;
 }
 
+.visual-content {
+  padding: 8px 0;
+}
+
 .visual-meta {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
   font-size: 12px;
   color: #6b7280;
@@ -488,9 +726,132 @@ export default {
   flex-wrap: wrap;
 }
 
+.visual-meta-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.visual-meta-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.non-topk-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #374151;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.non-topk-toggle:hover {
+  border-color: #cbd5e1;
+  background: #f9fafb;
+}
+
+.non-topk-toggle:active {
+  transform: translateY(1px);
+}
+
+.non-topk-toggle:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.18);
+  border-color: #93c5fd;
+}
+
+.toggle-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #1677ff;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+}
+
+.toggle-dot.on {
+  background: #9ca3af;
+}
+
+.toggle-text {
+  font-weight: 600;
+}
+
+@media (max-width: 520px) {
+  .visual-meta {
+    align-items: flex-start;
+  }
+  .visual-meta-right {
+    justify-content: flex-start;
+  }
+}
+
 .warning {
   color: #f59e0b;
 }
+
+.results-summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 16px;
+  background-color: #f9fafb;
+  border-radius: 6px;
+}
+
+.results-summary.is-single {
+  grid-template-columns: 1fr;
+}
+
+.summary-item {
+  text-align: center;
+}
+
+.summary-item .label {
+  display: block;
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.summary-item .value {
+  display: block;
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.topk-item {
+  text-align: left;
+}
+
+.topk-select {
+  margin-top: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.topk-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
 
 .table-wrapper {
   overflow-x: auto;
@@ -533,6 +894,24 @@ export default {
   color: #1f2937;
 }
 
+.importance-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.importance-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.importance-text {
+  font-size: 12px;
+  color: #4b5563;
+}
+
 @media (max-width: 1200px) {
   .top-row,
   .bottom-row {
@@ -540,4 +919,3 @@ export default {
   }
 }
 </style>
-
