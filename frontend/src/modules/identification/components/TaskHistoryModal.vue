@@ -13,6 +13,9 @@
           :current-page="currentPage"
           :loading="loading"
           :error="error"
+          :is-admin="isAdmin"
+          :user-filter="userFilter"
+          @set-user-filter="handleSetUserFilter"
           @refresh="refresh"
           @page-change="handlePageChange"
           @view-details="handleViewDetails"
@@ -38,22 +41,26 @@ export default {
     totalPages: { type: Number, default: 1 },
     currentPage: { type: Number, default: 1 },
     loading: { type: Boolean, default: false },
-    error: { type: String, default: '' }
+    error: { type: String, default: '' },
+    isAdmin: { type: Boolean, default: false },
+    userFilter: { type: [String, Number, null], default: null }
   },
-  emits: ['close', 'refresh', 'page-change', 'view-details', 'delete'],
+  emits: ['close', 'refresh', 'page-change', 'view-details', 'delete', 'set-user-filter'],
   setup(_props, { emit }) {
     const emitClose = () => emit('close')
     const refresh = () => emit('refresh')
     const handlePageChange = (page) => emit('page-change', page)
     const handleViewDetails = (task) => emit('view-details', task)
     const handleDelete = (task) => emit('delete', task)
+    const handleSetUserFilter = (v) => emit('set-user-filter', v)
 
     return {
       emitClose,
       refresh,
       handlePageChange,
       handleViewDetails,
-      handleDelete
+      handleDelete,
+      handleSetUserFilter
     }
   }
 }
@@ -146,4 +153,3 @@ export default {
   background-color: #d1d5db;
 }
 </style>
-

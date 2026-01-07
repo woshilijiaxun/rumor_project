@@ -53,6 +53,7 @@ export default {
       if (p.startsWith('/files')) return '文件管理'
       if (p.startsWith('/identification')) return '识别计算'
       if (p.startsWith('/settings')) return '系统设置'
+      if (p.startsWith('/admin-settings')) return '管理员设置'
       return ''
     }
   },

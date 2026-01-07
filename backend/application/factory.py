@@ -55,6 +55,7 @@ def create_app() -> Flask:
     from .blueprints.algorithms import bp as algorithms_bp
     from .blueprints.network import bp as network_bp
     from .blueprints.identification import bp as identification_bp
+    from .blueprints.admin import bp as admin_bp
 
     app.register_blueprint(auth_bp, url_prefix='/api')
     app.register_blueprint(users_bp, url_prefix='/api')
@@ -64,5 +65,6 @@ def create_app() -> Flask:
     app.register_blueprint(algorithms_bp, url_prefix='/api')
     app.register_blueprint(network_bp, url_prefix='/api')
     app.register_blueprint(identification_bp, url_prefix='/api')
+    app.register_blueprint(admin_bp, url_prefix='/api')
 
     return app

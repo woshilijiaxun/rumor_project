@@ -54,10 +54,12 @@ try:
     from .example_textline_algo import run as _example_run
     from .degree_centrality_algo import run as _degree_run
     from .hgc_algo import run as _hgc_run
+    from .cr_algo import run as _cr_run
 
     # 该 key 必须与你数据库 algorithms.algo_key 一致
     registry.register_key('example_textline_algo', '示例-按行读取', _example_run)
     registry.register_key('dc', '度中心性', _degree_run)
+    registry.register_key('cr', '圈比', _cr_run)
     registry.register_key('hgc', 'HGC算法', _hgc_run)
 except Exception:
     pass

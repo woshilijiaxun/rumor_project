@@ -9,7 +9,7 @@ import math
 import statistics
 import pandas as pd
 
-
+from application.algorithms.my_algo_module import cr
 
 from typing import Any, Dict
 
@@ -94,7 +94,7 @@ def cal_hgc(G: nx.Graph) -> Dict[int, float]:
     sh = SH(G)
     
     # 2. 计算CR
-    import cr
+    
     cr_list = cr.compute_cycle_ratio(G)
     
     ks = nx.core_number(G)
@@ -116,6 +116,7 @@ def cal_hgc(G: nx.Graph) -> Dict[int, float]:
         s = 0
         for nei in neighbors:
             s += degrees[nei]
+            
         DK[node] = degrees[node]  # 注意：原代码中Y和s计算了但未使用
     
     # 4. 计算LCGM（原代码逻辑）

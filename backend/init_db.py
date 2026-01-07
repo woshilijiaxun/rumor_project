@@ -47,9 +47,11 @@ def create_tables():
             username VARCHAR(50) NOT NULL UNIQUE,
             password VARCHAR(255) NOT NULL,
             email VARCHAR(100),
+            role VARCHAR(20) NOT NULL DEFAULT 'user',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_username (username)
+            INDEX idx_username (username),
+            INDEX idx_role (role)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
         """
         cursor.execute(create_users_table)
@@ -60,6 +62,7 @@ def create_tables():
         CREATE TABLE IF NOT EXISTS uploads (
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id INT NULL,
+            visibility VARCHAR(20) NOT NULL DEFAULT 'private',
             original_name VARCHAR(255) NOT NULL,
             stored_name VARCHAR(255) NOT NULL,
             mime_type VARCHAR(100),
@@ -67,6 +70,8 @@ def create_tables():
             storage_path VARCHAR(255),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_user_id (user_id),
+            INDEX idx_visibility (visibility),
+            INDEX idx_visibility_user_id (visibility, user_id),
             CONSTRAINT fk_uploads_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
         """
@@ -147,6 +152,19 @@ def create_tables():
         cursor.execute(create_file_graph_cache_table)
         print("✓ 文件拓扑缓存表创建成功或已存在")
 
+        # 创建系统配置表（system_config）
+        create_system_config_table = """
+        CREATE TABLE IF NOT EXISTS system_config (
+            `key` VARCHAR(64) PRIMARY KEY,
+            `value` TEXT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            updated_by INT NULL,
+            INDEX idx_updated_by (updated_by)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """
+        cursor.execute(create_system_config_table)
+        print("✓ 系统配置表创建成功或已存在")
+
         # 插入测试用户（如果不存在）
         check_user = "SELECT COUNT(*) as count FROM users WHERE username = 'admin'"
         cursor.execute(check_user)
@@ -155,11 +173,7 @@ def create_tables():
         if result['count'] == 0:
             # 使用哈希密码存储测试账号
             pwd_hash = generate_password_hash('admin123')
-            insert_test_user = """
-            INSERT INTO users (username, password, email) 
-            VALUES (%s, %s, %s)
-            """
-            cursor.execute(insert_test_user, ('admin', pwd_hash, 'admin@example.com'))
+            cursor.execute("INSERT INTO users (username, password, email, role) VALUES (%s, %s, %s, %s)", ('admin', pwd_hash, 'admin@example.com', 'admin'))
             conn.commit()
             print("✓ 测试用户创建成功 (用户名: admin, 密码: admin123，已使用哈希存储)")
         else:

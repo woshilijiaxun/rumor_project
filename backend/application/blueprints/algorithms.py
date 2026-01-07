@@ -1,6 +1,6 @@
 from flask import Blueprint, request
 from mysql.connector import Error
-from application.common.auth import require_auth
+from application.common.auth import require_auth, require_admin
 from application.common.responses import ok, fail
 from application.services import algorithms_service
 
@@ -26,7 +26,7 @@ def list_algorithms():
 
 
 @bp.route('/algorithms', methods=['POST'])
-@require_auth
+@require_admin
 def create_algorithm():
     data = request.get_json() or {}
     name = (data.get('name') or '').strip()
@@ -64,7 +64,7 @@ def get_algorithm(algo_id: int):
 
 
 @bp.route('/algorithms/<int:algo_id>', methods=['PUT'])
-@require_auth
+@require_admin
 def update_algorithm(algo_id: int):
     data = request.get_json() or {}
     name = data.get('name')
@@ -85,7 +85,7 @@ def update_algorithm(algo_id: int):
 
 
 @bp.route('/algorithms/<int:algo_id>', methods=['DELETE'])
-@require_auth
+@require_admin
 def delete_algorithm(algo_id: int):
     try:
         if not algorithms_service.get_algorithm(algo_id):

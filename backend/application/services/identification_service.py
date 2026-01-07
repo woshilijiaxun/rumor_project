@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from flask import current_app
 
+from application.common.auth import is_admin
 from application.services import uploads_service, algorithms_service
 from application.repositories import identification_repo
 from application.algorithms.registry import registry as algo_registry
@@ -56,15 +57,7 @@ def task_to_public_dict(task: IdentificationTask) -> Dict[str, Any]:
     return d
 
 
-def get_tasks_by_user(user_id: int, page: int = 1, page_size: int = 20) -> Dict[str, Any]:
-    page = max(int(page or 1), 1)
-    page_size = min(max(int(page_size or 20), 1), 100)
-    offset = (page - 1) * page_size
-
-    items, total = identification_repo.list_tasks_by_user(user_id=user_id, offset=offset, limit=page_size)
-    total_pages = max((total + page_size - 1) // page_size, 1)
-
-    # 统一字段命名与前端兼容
+def _normalize_list_items(items):
     normalized = []
     for it in items:
         normalized.append({
@@ -81,9 +74,43 @@ def get_tasks_by_user(user_id: int, page: int = 1, page_size: int = 20) -> Dict[
             'ended_at': it.get('ended_at'),
             'file_name': it.get('file_name'),
         })
+    return normalized
+
+
+def get_tasks_by_user(user_id: int, page: int = 1, page_size: int = 20) -> Dict[str, Any]:
+    page = max(int(page or 1), 1)
+    page_size = min(max(int(page_size or 20), 1), 100)
+    offset = (page - 1) * page_size
+
+    items, total = identification_repo.list_tasks_by_user(user_id=user_id, offset=offset, limit=page_size)
+    total_pages = max((total + page_size - 1) // page_size, 1)
 
     return {
-        'items': normalized,
+        'items': _normalize_list_items(items),
+        'total': total,
+        'page': page,
+        'page_size': page_size,
+        'total_pages': total_pages
+    }
+
+
+def get_tasks(page: int = 1, page_size: int = 20, user_id: Optional[int] = None) -> Dict[str, Any]:
+    """管理员用：全量任务列表；也可以按 user_id 过滤。
+
+    注意：应只在 is_admin()==True 的情况下调用。
+    """
+    if user_id is not None:
+        return get_tasks_by_user(user_id=int(user_id), page=page, page_size=page_size)
+
+    page = max(int(page or 1), 1)
+    page_size = min(max(int(page_size or 20), 1), 100)
+    offset = (page - 1) * page_size
+
+    items, total = identification_repo.list_all_tasks(offset=offset, limit=page_size)
+    total_pages = max((total + page_size - 1) // page_size, 1)
+
+    return {
+        'items': _normalize_list_items(items),
         'total': total,
         'page': page,
         'page_size': page_size,
@@ -145,11 +172,44 @@ def get_task(task_id: str) -> Optional[IdentificationTask]:
         return None
 
 
+def _can_use_upload(current_user_id: int, upload_row: Dict[str, Any]) -> bool:
+    """判断当前用户是否允许使用该文件。
+
+    规则：admin 全放开；普通用户仅 public 或 owner。
+    """
+    if is_admin():
+        return True
+    if not upload_row:
+        return False
+    if (upload_row.get('visibility') or 'private') == 'public':
+        return True
+    try:
+        return int(upload_row.get('user_id') or 0) == int(current_user_id)
+    except Exception:
+        return False
+
+
 def create_task(app, user_id: int, file_id: int, algorithm_key: str, params: Optional[Dict[str, Any]] = None) -> IdentificationTask:
     """创建异步识别任务（方案2：algo_key）。
 
     注意：后台线程执行需要 Flask application context，因此必须传入 app 实例。
     """
+    # 同步校验：文件权限（public 或 owner；admin 全放开）
+    try:
+        upload_row = uploads_service.get_upload_record(file_id)
+        if not upload_row:
+            raise ValueError('文件不存在')
+        if not _can_use_upload(user_id, upload_row):
+            raise PermissionError('无权限使用该文件')
+    except PermissionError:
+        # 让上层捕获并返回 403
+        raise
+    except ValueError:
+        raise
+    except Exception:
+        # 其它异常不阻塞创建（这里选择阻塞更安全）
+        raise
+
     t = IdentificationTask(
         task_id=uuid.uuid4().hex,
         user_id=user_id,
@@ -198,6 +258,14 @@ def delete_task(task_id: str, user_id: int) -> bool:
         return False
 
 
+def delete_task_anyway(task_id: str) -> bool:
+    try:
+        affected = identification_repo.delete_task_anyway(task_id=task_id)
+        return affected > 0
+    except Exception:
+        return False
+
+
 def cancel_task(task_id: str, user_id: int) -> bool:
     with _tasks_lock:
         t = _tasks.get(task_id)
@@ -210,6 +278,24 @@ def cancel_task(task_id: str, user_id: int) -> bool:
         t.status = TASK_STATUS_CANCELLED
         t.stage = 'cancelled'
         t.message = '任务已取消'
+        t.ended_at = _now()
+        return True
+
+
+def cancel_task_anyway(task_id: str) -> bool:
+    """管理员强制取消运行中任务（仅内存任务）。
+
+    对于已落库的历史任务：取消的语义不明确（可能已经结束），这里保持仅取消内存任务。
+    """
+    with _tasks_lock:
+        t = _tasks.get(task_id)
+        if not t:
+            return False
+        if t.status in (TASK_STATUS_SUCCEEDED, TASK_STATUS_FAILED, TASK_STATUS_CANCELLED):
+            return True
+        t.status = TASK_STATUS_CANCELLED
+        t.stage = 'cancelled'
+        t.message = '任务已取消(管理员操作)'
         t.ended_at = _now()
         return True
 
@@ -261,6 +347,12 @@ def _run_task(app, task_id: str):
             if not row:
                 _update_task(task_id, status=TASK_STATUS_FAILED, stage='failed', message='文件不存在', ended_at=_now(), progress=100,
                              error={'code': 'FILE_NOT_FOUND', 'message': '文件不存在'})
+                return
+
+            # 安全兜底：再次校验文件使用权限（public 或 owner；admin 全放开）
+            if not _can_use_upload(task.user_id, row):
+                _update_task(task_id, status=TASK_STATUS_FAILED, stage='failed', message='无权限使用该文件', ended_at=_now(), progress=100,
+                             error={'code': 'FILE_FORBIDDEN', 'message': '无权限使用该文件'})
                 return
 
             # Validate algorithm record by algo_key

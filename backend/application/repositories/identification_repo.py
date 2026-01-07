@@ -183,6 +183,27 @@ def delete_task_by_id(task_id: str, user_id: int) -> int:
         conn.close()
 
 
+def delete_task_anyway(task_id: str) -> int:
+    """管理员强制删除任务（不校验 user_id）。
+
+    返回受影响行数（0 表示不存在）。
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM identification_task_results WHERE task_id=%s", (task_id,))
+        cursor.execute("DELETE FROM identification_tasks WHERE task_id=%s", (task_id,))
+        affected = cursor.rowcount
+        conn.commit()
+        return int(affected or 0)
+    finally:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        conn.close()
+
+
 def list_tasks_by_user(user_id: int, offset: int, limit: int) -> Tuple[List[Dict[str, Any]], int]:
     conn = get_db_connection()
     try:
@@ -219,6 +240,51 @@ def list_tasks_by_user(user_id: int, offset: int, limit: int) -> Tuple[List[Dict
             LIMIT %s OFFSET %s
             """,
             (user_id, limit, offset)
+        )
+        items = cursor.fetchall() or []
+        return items, total
+    finally:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        conn.close()
+
+
+def list_all_tasks(offset: int, limit: int) -> Tuple[List[Dict[str, Any]], int]:
+    """管理员查看全量任务列表。"""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM identification_tasks
+            """
+        )
+        total = int((cursor.fetchone() or {}).get('cnt', 0))
+
+        cursor.execute(
+            """
+            SELECT
+              t.task_id,
+              t.user_id,
+              t.file_id,
+              t.algorithm_key,
+              t.status,
+              t.progress,
+              t.stage,
+              t.message,
+              t.created_at,
+              t.started_at,
+              t.ended_at,
+              u.original_name AS file_name
+            FROM identification_tasks t
+            LEFT JOIN uploads u ON u.id = t.file_id
+            ORDER BY t.created_at DESC
+            LIMIT %s OFFSET %s
+            """,
+            (limit, offset)
         )
         items = cursor.fetchall() or []
         return items, total

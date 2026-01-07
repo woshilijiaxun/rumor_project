@@ -45,16 +45,16 @@ def login():
             if not ok_flag:
                 return fail("用户名或密码错误", http_code=401)
 
-            token = create_token(user['id'], user['username'])
+            token = create_token(user['id'], user['username'], user.get('role') or 'user')
             from flask import jsonify
             payload = {
                 "status": "success",
                 "message": "登录成功！" + ("(已自动升级密码存储)" if upgraded else ""),
                 "token": token,
-                "user": {"id": user['id'], "username": user['username'], "email": user.get('email')},
+                "user": {"id": user['id'], "username": user['username'], "email": user.get('email'), "role": user.get('role') or 'user'},
                 "data": {
                     "token": token,
-                    "user": {"id": user['id'], "username": user['username'], "email": user.get('email')},
+                    "user": {"id": user['id'], "username": user['username'], "email": user.get('email'), "role": user.get('role') or 'user'},
                     "upgraded": upgraded
                 }
             }
@@ -93,10 +93,10 @@ def register():
             cursor.execute("INSERT INTO users (username, password, email) VALUES (%s, %s, %s)", (username, pwd_hash, email))
             conn.commit()
             user_id = cursor.lastrowid
-            token = create_token(user_id, username)
+            token = create_token(user_id, username, 'user')
             return ok({
                 "token": token,
-                "user": {"id": user_id, "username": username, "email": email}
+                "user": {"id": user_id, "username": username, "email": email, "role": 'user'}
             }, message="注册成功！")
         finally:
             cursor.close()

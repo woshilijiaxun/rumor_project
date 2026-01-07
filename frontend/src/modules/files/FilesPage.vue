@@ -19,6 +19,19 @@
 
     <!-- 搜索栏，与算法管理页面风格一致 -->
     <div class="filter-bar">
+      <div class="segmented">
+        <button
+          v-for="it in listFilters"
+          :key="it.value"
+          type="button"
+          class="seg-btn"
+          :class="{ active: activeListFilter === it.value }"
+          @click="activeListFilter = it.value"
+        >
+          {{ it.label }}
+        </button>
+      </div>
+
       <input
         v-model="fileSearch"
         type="text"
@@ -34,6 +47,8 @@
           <th>文件名</th>
           <th>类型</th>
           <th>大小</th>
+          <th>可见性</th>
+          <th>上传者</th>
           <th>上传时间</th>
           <th>操作</th>
         </tr>
@@ -44,15 +59,21 @@
           <td :title="f.original_name">{{ getFileNameWithoutExt(f.original_name) }}</td>
           <td>{{ getFileExtension(f.original_name) }}</td>
           <td>{{ formatSize(f.size_bytes) }}</td>
+          <td>
+            <span class="vis" :class="(f.visibility || 'private') === 'public' ? 'vis-public' : 'vis-private'">
+              {{ (f.visibility || 'private') === 'public' ? '公开' : '私有' }}
+            </span>
+          </td>
+          <td>{{ formatUploader(f.user_id) }}</td>
           <td>{{ formatDate(f.created_at) }}</td>
           <td class="ops">
             <a href="javascript:void(0)" @click="previewFile(f)">预览</a>
             <a href="javascript:void(0)" @click="downloadFile(f)">下载</a>
-            <a href="javascript:void(0)" @click="removeFile(f)">删除</a>
+            <a v-if="canDelete(f)" href="javascript:void(0)" @click="removeFile(f)">删除</a>
           </td>
         </tr>
         <tr v-if="files.length === 0">
-          <td colspan="6" class="empty">暂无文件</td>
+          <td colspan="8" class="empty">暂无文件</td>
         </tr>
       </tbody>
     </table>
@@ -89,6 +110,20 @@
           <span class="progress-text">{{ uploadProgress }}%</span>
         </div>
 
+        <div class="form-row">
+          <label>可见性</label>
+          <div class="visibility-row">
+            <label class="radio">
+              <input type="radio" value="private" v-model="uploadVisibility" :disabled="uploading" />
+              私有（仅自己可见）
+            </label>
+            <label class="radio">
+              <input type="radio" value="public" v-model="uploadVisibility" :disabled="uploading" />
+              公开（所有用户可见）
+            </label>
+          </div>
+        </div>
+
         <div class="actions">
           <button @click="closeUpload" :disabled="uploading">取消</button>
           <button class="primary" @click="doUpload" :disabled="uploadFiles.length === 0 || uploading">{{ uploading ? '上传中...' : '开始上传' }}</button>
@@ -111,23 +146,51 @@
 
 <script>
 import axios from 'axios'
+import { settingsStore } from '../settings/settingsStore'
 export default {
   name: 'FilesPage',
   data() {
     return {
       files: [], filesLoading: false, filesError: '',
       page: 1, page_size: 10, total: 0,
+      // 偏好设置（localStorage）
+      _prefs: null,
+      defaultListFilter: 'all',
       fileSearch: '',
+      activeListFilter: 'all',
+      listFilters: [
+        { label: '全部', value: 'all' },
+        { label: '仅 public', value: 'public' },
+        { label: '仅我的', value: 'mine' }
+      ],
       uploadVisible: false, uploadFiles: [], uploading: false, uploadProgress: 0,
       uploadError: '', uploadSuccess: '', uploadResultVisible: false, uploadResultMessage: '',
-      uploadedCount: 0, failedCount: 0
+      uploadedCount: 0, failedCount: 0,
+      uploadVisibility: 'private',
+      currentUserId: null,
+      isAdmin: false
     }
   },
   computed: {
     displayFiles() {
       const kw = (this.fileSearch || '').trim().toLowerCase()
-      if (!kw) return this.files
-      return this.files.filter(f => {
+
+      // 1) 先按可见性/归属过滤
+      let list = Array.isArray(this.files) ? this.files : []
+      const filter = this.activeListFilter || 'all'
+      if (filter === 'public') {
+        list = list.filter(f => (f.visibility || 'private') === 'public')
+      } else if (filter === 'mine') {
+        if (this.currentUserId != null) {
+          list = list.filter(f => Number(f.user_id) === Number(this.currentUserId))
+        } else {
+          list = []
+        }
+      }
+
+      // 2) 再按关键字过滤
+      if (!kw) return list
+      return list.filter(f => {
         const name = (f.original_name || '').toLowerCase()
         const type = (f.mime_type || '').toLowerCase()
         return name.includes(kw) || type.includes(kw)
@@ -135,6 +198,29 @@ export default {
     }
   },
   methods: {
+    loadCurrentUser() {
+      try {
+        const raw = localStorage.getItem('user')
+        const u = raw ? JSON.parse(raw) : null
+        this.currentUserId = u && u.id != null ? Number(u.id) : null
+        this.isAdmin = !!(u && u.role === 'admin')
+      } catch (e) {
+        this.currentUserId = null
+        this.isAdmin = false
+      }
+    },
+    canDelete(f) {
+      if (this.isAdmin) return true
+      if (!f) return false
+      if (this.currentUserId == null) return false
+      return Number(f.user_id) === Number(this.currentUserId)
+    },
+    formatUploader(userId) {
+      if (userId == null) return '-'
+      if (this.currentUserId != null && Number(userId) === Number(this.currentUserId)) return '我'
+      return '用户#' + String(userId)
+    },
+
     fetchFiles() {
       this.filesLoading = true
       this.filesError = ''
@@ -177,7 +263,17 @@ export default {
         else alert(res.data?.message || '删除失败')
       }).catch(err => { alert(err.response?.data?.message || err.message || '删除失败') })
     },
-    openUpload() { this.uploadVisible = true; this.uploadFiles = []; this.uploadError = ''; this.uploadSuccess = ''; this.uploadProgress = 0; this.uploadedCount = 0; this.failedCount = 0 },
+    openUpload() {
+      this.uploadVisible = true
+      this.uploadFiles = []
+      const prefs = this._prefs || settingsStore.load()
+      this.uploadVisibility = prefs.uploadDefaultVisibility || 'private'
+      this.uploadError = ''
+      this.uploadSuccess = ''
+      this.uploadProgress = 0
+      this.uploadedCount = 0
+      this.failedCount = 0
+    },
     closeUpload() { this.uploadVisible = false },
     chooseFile() { const input = this.$refs.fileInput; if (input) input.click() },
     onFileChange(e) { 
@@ -206,10 +302,11 @@ export default {
       this.uploading = true; this.uploadProgress = 0
       const totalFiles = this.uploadFiles.length
       let completedCount = 0
-      const uploadPromises = this.uploadFiles.map((file, idx) => {
+      const uploadPromises = this.uploadFiles.map((file) => {
         return new Promise((resolve) => {
           const fd = new FormData()
           fd.append('file', file)
+          fd.append('visibility', this.uploadVisibility || 'private')
           axios.post('/api/upload', fd, {
             headers: { 'Content-Type': 'multipart/form-data' },
             onUploadProgress: (evt) => {
@@ -227,7 +324,7 @@ export default {
             }
             completedCount++
             resolve()
-          }).catch(err => {
+          }).catch(() => {
             this.failedCount++
             completedCount++
             resolve()
@@ -258,7 +355,15 @@ export default {
     formatDate(v) { if (!v) return '-'; const t = Date.parse(v); if (isNaN(t)) return v; return new Date(t).toLocaleString('zh-CN') },
     formatSize(b) { if (b == null) return '-'; const units = ['B','KB','MB','GB','TB']; let n = Number(b), i = 0; while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ } return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}` }
   },
-  mounted() { this.fetchFiles() }
+  mounted() {
+    const prefs = settingsStore.load()
+    this._prefs = prefs
+    this.page_size = prefs.filesPageSize || 10
+    this.defaultListFilter = prefs.filesDefaultFilter || 'all'
+    this.activeListFilter = this.defaultListFilter
+    this.loadCurrentUser()
+    this.fetchFiles()
+  }
 }
 </script>
 
@@ -314,8 +419,25 @@ export default {
 .progress { position: relative; height: 8px; background: #f0f0f0; border-radius: 4px; overflow: hidden; margin: 6px 0 12px; }
 .progress .bar { height: 100%; background: #1890ff; width: 0; transition: width .2s ease; }
 .progress-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 12px; color: #666; font-weight: 500; white-space: nowrap; }
+
+/* 可见性标签 */
+.vis { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 9999px; font-size: 12px; line-height: 1; font-weight: 700; border: 1px solid transparent; }
+.vis-public { background: rgba(22, 119, 255, 0.10); color: #1677ff; border-color: rgba(22, 119, 255, 0.22); }
+.vis-private { background: rgba(102, 102, 102, 0.10); color: #555; border-color: rgba(102, 102, 102, 0.22); }
+
+/* 上传弹窗：可见性单选 */
+.visibility-row { display: flex; gap: 12px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fafafa; }
+.radio { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #333; cursor: pointer; user-select: none; }
+.radio input[type="radio"] { width: 14px; height: 14px; accent-color: #1677ff; cursor: pointer; }
+
 /* 搜索栏样式（与算法页保持一致） */
-.filter-bar { display: flex; gap: 10px; margin: 10px 0 12px; }
+.filter-bar { display: flex; gap: 10px; margin: 10px 0 12px; align-items: center; flex-wrap: wrap; }
+
+.segmented { display: inline-flex; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background: #fff; }
+.seg-btn { padding: 8px 10px; border: none; background: transparent; cursor: pointer; font-size: 13px; color: #374151; }
+.seg-btn:hover { background: #f9fafb; }
+.seg-btn.active { background: #1677ff; color: #fff; }
+
 .search-input { padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 14px; width: 320px; }
 .search-input:focus { outline: none; border-color: #1677ff; box-shadow: 0 0 0 2px rgba(22,119,255,.15); }
 </style>

@@ -4,9 +4,10 @@ from flask import Blueprint, request, g, current_app, send_from_directory
 from werkzeug.utils import secure_filename
 from mysql.connector import Error
 
-from application.common.auth import require_auth
+from application.common.auth import require_auth, is_admin
 from application.common.responses import ok, fail
 from application.services import uploads_service
+from application.services.audit_logs_service import write_log
 
 bp = Blueprint('uploads', __name__)
 
@@ -40,13 +41,18 @@ def upload_file():
         mime_type = f.mimetype or ''
 
         # 通过 service 写数据库记录
+        visibility = (request.form.get('visibility') or 'private').strip().lower()
+        if visibility not in ('public', 'private'):
+            return fail("visibility 只能为 public 或 private", http_code=400)
+
         upload_id = uploads_service.create_upload_record(
             user_id=g.user['id'],
             original_name=filename,
             stored_name=stored_name,
             mime_type=mime_type,
             size_bytes=size_bytes,
-            storage_path=rel_path
+            storage_path=rel_path,
+            visibility=visibility
         )
 
         return ok({
@@ -69,7 +75,7 @@ def list_uploads():
     try:
         page = request.args.get('page', 1, type=int)
         page_size = request.args.get('page_size', 10, type=int)
-        payload = uploads_service.list_uploads_paginated(page=page, page_size=page_size)
+        payload = uploads_service.list_uploads_paginated(page=page, page_size=page_size, current_user_id=g.user['id'])
         return ok(payload)
     except Error as e:
         return fail("数据库错误: " + str(e), http_code=500, status="error")
@@ -84,6 +90,10 @@ def download_upload(file_id: int):
         row = uploads_service.get_upload_record(file_id)
         if not row:
             return fail("文件不存在", http_code=404)
+
+        if (not is_admin()) and (row.get('visibility') != 'public') and (int(row.get('user_id') or 0) != int(g.user['id'])):
+            return fail("无权限访问该文件", http_code=403)
+
         stored_name = row['stored_name']
         original_name = row['original_name']
         directory = current_app.config['UPLOAD_FOLDER']
@@ -99,6 +109,10 @@ def inline_file(file_id: int):
         row = uploads_service.get_upload_record(file_id)
         if not row:
             return fail("文件不存在", http_code=404)
+
+        if (not is_admin()) and (row.get('visibility') != 'public') and (int(row.get('user_id') or 0) != int(g.user['id'])):
+            return fail("无权限访问该文件", http_code=403)
+
         directory = current_app.config['UPLOAD_FOLDER']
         return send_from_directory(directory=directory, path=row['stored_name'], as_attachment=False)
     except Exception as e:
@@ -113,6 +127,10 @@ def delete_upload(file_id: int):
         if not row:
             return fail("文件不存在", http_code=404)
 
+        # 权限：管理员可删任意；普通用户只能删自己
+        if (not is_admin()) and (int(row.get('user_id') or 0) != int(g.user['id'])):
+            return fail("无权限删除该文件", http_code=403)
+
         # 先删物理文件
         try:
             abs_path = os.path.join(current_app.config['UPLOAD_FOLDER'], row['stored_name'])
@@ -123,6 +141,19 @@ def delete_upload(file_id: int):
 
         # 再删记录
         uploads_service.delete_upload_record(file_id)
+
+        # 写审计日志（不影响主流程）
+        try:
+            write_log(
+                actor_user_id=g.user.get('id'),
+                action='UPLOAD_DELETE',
+                target_type='upload',
+                target_id=str(file_id),
+                detail={'original_name': row.get('original_name'), 'stored_name': row.get('stored_name')}
+            )
+        except Exception:
+            pass
+
         return ok(message="删除成功")
     except Error as e:
         return fail("数据库错误: " + str(e), http_code=500, status="error")

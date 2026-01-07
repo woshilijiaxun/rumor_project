@@ -305,6 +305,9 @@
       @page-change="onHistoryPageChange"
       @view-details="onHistoryViewDetails"
       @delete="onHistoryDelete"
+      :is-admin="isAdmin"
+      :user-filter="historyUserIdFilter"
+      @set-user-filter="onHistorySetUserFilter"
     />
   </div>
 </template>
@@ -317,6 +320,7 @@ import GraphView from './components/GraphView.vue'
 import ErrorModal from './components/ErrorModal.vue'
 import TaskHistoryModal from './components/TaskHistoryModal.vue'
 import { identificationService } from './services/identificationService'
+import { settingsStore } from '../settings/settingsStore'
 
 export default {
   name: 'IdentificationPage',
@@ -373,6 +377,18 @@ export default {
     const historyPageSize = 20
     const historyTotalPages = ref(1)
 
+    // admin 才可用的历史 user_id 筛选
+    const isAdmin = computed(() => {
+      try {
+        const user = JSON.parse(localStorage.getItem('user'))
+        return user?.role === 'admin'
+      } catch {
+        return false
+      }
+    })
+
+    const historyUserIdFilter = ref('')
+
     // 错误弹窗
     const showErrorModal = ref(false)
     const errorModalMessage = ref('')
@@ -398,7 +414,8 @@ export default {
     const resultsMap = ref(null) // 原始 map：{ node_id: node_value }
 
     // Top-K 展示
-    const topK = ref(10)
+    const _prefs = settingsStore.load()
+    const topK = ref(Number(_prefs.identDefaultTopK) || 10)
 
     const pollTimer = ref(null)
 
@@ -531,7 +548,7 @@ export default {
     })
 
     // 默认：首次可视化时非Top-K节点显示为蓝色
-    const nonTopKGray = ref(false)
+    const nonTopKGray = ref(String(_prefs.identDefaultNonTopKGray || '0') === '1')
 
     const topKHighlightMap = computed(() => {
       const map = {}
@@ -640,10 +657,14 @@ export default {
       historyLoading.value = true
       historyError.value = ''
       try {
-        const res = await identificationService.getTasks({
+        const params = {
           page: historyPage.value,
           page_size: historyPageSize
-        })
+        }
+        if (isAdmin.value) {
+          params.user_id = historyUserIdFilter.value
+        }
+        const res = await identificationService.getTasks(params)
         // 兼容返回结构：data.items 或 data.data.items
         const payload = res?.data || res?.data?.data || res?.data
         const items = Array.isArray(payload?.items) ? payload.items : (Array.isArray(payload) ? payload : [])
@@ -668,6 +689,13 @@ export default {
     const openHistoryModal = async () => {
       showHistoryModal.value = true
       historyPage.value = 1
+      await loadHistoryTasks()
+    }
+
+    const onHistorySetUserFilter = async (v) => {
+      historyUserIdFilter.value = v
+      historyPage.value = 1
+      // 子组件也会 emit refresh，这里做一次兜底刷新
       await loadHistoryTasks()
     }
 
@@ -849,7 +877,7 @@ export default {
 
       return new Promise((resolve, reject) => {
         const startedAt = Date.now()
-        const timeoutMs = 10 * 60 * 1000 // 10 分钟超时
+        const timeoutMs = Number(_prefs.identPollTimeoutMs) || (10 * 60 * 1000) // 10 分钟超时
 
         pollTimer.value = setInterval(async () => {
           try {
@@ -884,7 +912,7 @@ export default {
             stopPolling()
             reject(e)
           }
-        }, 1000)
+        }, Number(_prefs.identPollIntervalMs) || 1000)
       })
     }
 
@@ -1079,10 +1107,13 @@ export default {
       historyTotalPages,
       historyLoading,
       historyError,
+      isAdmin,
+      historyUserIdFilter,
       onHistoryRefresh,
       onHistoryPageChange,
       onHistoryViewDetails,
       onHistoryDelete,
+      onHistorySetUserFilter,
       topKHighlightMap,
       nonTopKGray,
       toggleNonTopKGray

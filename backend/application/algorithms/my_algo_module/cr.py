@@ -1,5 +1,5 @@
 import networkx as nx
-import itertools
+
 from typing import Dict, Set, Tuple, List
 
 def compute_cycle_ratio(G: nx.Graph) -> Dict[int, float]:

@@ -1,6 +1,6 @@
 import os
-from flask import Blueprint, request, current_app
-from application.common.auth import require_auth
+from flask import Blueprint, request, current_app, g
+from application.common.auth import require_auth, is_admin
 from application.common.responses import ok, fail
 from application.services import uploads_service
 from application.services.graph_service import parse_graph_from_file
@@ -28,6 +28,14 @@ def get_network_graph():
         else:
             max_edges = 10000
 
+        row = uploads_service.get_upload_record(file_id)
+        if not row:
+            return fail('文件不存在', http_code=404)
+
+        # 权限：管理员可访问任意；普通用户仅 public 或 owner
+        if (not is_admin()) and (row.get('visibility') != 'public') and (int(row.get('user_id') or 0) != int(g.user['id'])):
+            return fail('无权限访问该文件', http_code=403)
+
         force = request.args.get('force', default=0, type=int)
         graph_version = 'v1'
 
@@ -37,15 +45,19 @@ def get_network_graph():
                 cached = graph_cache_repo.get_cached_graph(file_id=file_id, graph_version=graph_version, max_edges=max_edges)
                 if cached and cached.get('graph_json'):
                     graph_raw = cached.get('graph_json')
-                    meta_raw = cached.get('meta_json')
-
                     import json
                     graph_obj = json.loads(graph_raw) if isinstance(graph_raw, (str, bytes)) else graph_raw
-                    meta_obj = json.loads(meta_raw) if isinstance(meta_raw, (str, bytes)) else (meta_raw or {})
 
                     return ok({
                         'file': {
-                            'id': file_id
+                            'id': row['id'],
+                            'original_name': row.get('original_name'),
+                            'stored_name': row.get('stored_name'),
+                            'mime_type': row.get('mime_type', ''),
+                            'size_bytes': row.get('size_bytes'),
+                            'storage_path': row.get('storage_path', ''),
+                            'visibility': row.get('visibility', 'private'),
+                            'user_id': row.get('user_id')
                         },
                         'graph': graph_obj,
                         'cache': {
@@ -56,10 +68,6 @@ def get_network_graph():
             except Exception:
                 # 缓存失败不影响主流程
                 pass
-
-        row = uploads_service.get_upload_record(file_id)
-        if not row:
-            return fail('文件不存在', http_code=404)
 
         stored_name = row['stored_name']
         original_name = row.get('original_name') or stored_name

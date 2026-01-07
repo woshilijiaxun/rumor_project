@@ -1,12 +1,21 @@
 <template>
   <div class="task-history">
     <div class="history-header">
-      <h3>识别任务历史</h3>
+      <h3>{{ isAdmin ? '任务历史' : '我的识别历史' }}</h3>
       <div class="header-actions">
+        <input 
+          v-if="isAdmin"
+          :value="userFilter"
+          @input="updateUserFilter"
+          @keyup.enter="triggerRefresh"
+          type="text" 
+          placeholder="按用户ID筛选..."
+          class="search-input user-filter-input"
+        />
         <input 
           v-model="searchKeyword" 
           type="text" 
-          placeholder="搜索任务..."
+          placeholder="按文件名搜索..."
           class="search-input"
         />
         <button @click="refreshTasks" class="refresh-btn">刷新</button>
@@ -32,6 +41,10 @@
           <div class="task-info">
             <div class="task-title">{{ getTaskTitle(task) }}</div>
             <div class="task-meta">
+              <span v-if="isAdmin" class="meta-item user-id-meta">
+                <span class="label">用户:</span>
+                <span class="value">#{{ task.user_id }}</span>
+              </span>
               <span class="meta-item">
                 <span class="label">算法:</span>
                 <span class="value">{{ task.algorithmName || task.algorithm_key || task.algo_key || '-' }}</span>
@@ -39,10 +52,6 @@
               <span class="meta-item">
                 <span class="label">时间:</span>
                 <span class="value">{{ formatTime(task.createdAt || task.created_at) }}</span>
-              </span>
-              <span class="meta-item">
-                <span class="label">数据量:</span>
-                <span class="value">{{ task.dataCount }}</span>
               </span>
             </div>
           </div>
@@ -55,7 +64,6 @@
 
           <div class="task-actions">
             <button @click="viewDetails(task)" class="action-btn view-btn">查看</button>
-            <button @click="downloadResults(task)" class="action-btn download-btn">下载</button>
             <button @click="deleteTask(task)" class="action-btn delete-btn">删除</button>
           </div>
         </div>
@@ -65,7 +73,7 @@
       <div v-if="totalPages > 1" class="pagination">
         <button 
           @click="previousPage" 
-          :disabled="currentPage === 1"
+          :disabled="currentPage === 1 || loading"
           class="page-btn"
         >
           上一页
@@ -73,7 +81,7 @@
         <span class="page-info">{{ currentPage }} / {{ totalPages }}</span>
         <button 
           @click="nextPage" 
-          :disabled="currentPage === totalPages"
+          :disabled="currentPage === totalPages || loading"
           class="page-btn"
         >
           下一页
@@ -90,28 +98,15 @@ import { identificationService } from '../services/identificationService'
 export default {
   name: 'TaskHistory',
   props: {
-    tasks: {
-      type: Array,
-      default: () => []
-    },
-    totalPages: {
-      type: Number,
-      default: 1
-    },
-    currentPage: {
-      type: Number,
-      default: 1
-    },
-    loading: {
-      type: Boolean,
-      default: false
-    },
-    error: {
-      type: String,
-      default: ''
-    }
+    tasks: { type: Array, default: () => [] },
+    totalPages: { type: Number, default: 1 },
+    currentPage: { type: Number, default: 1 },
+    loading: { type: Boolean, default: false },
+    error: { type: String, default: '' },
+    isAdmin: { type: Boolean, default: false },
+    userFilter: { type: [String, Number, null], default: null }
   },
-  emits: ['view-details', 'download', 'delete', 'page-change', 'refresh'],
+  emits: ['view-details', 'delete', 'page-change', 'refresh', 'set-user-filter'],
   setup(props, { emit }) {
     const searchKeyword = ref('')
 
@@ -120,29 +115,30 @@ export default {
         return props.tasks
       }
       const keyword = searchKeyword.value.toLowerCase()
-      return props.tasks.filter(task =>
-        task.name.toLowerCase().includes(keyword) ||
-        task.algorithmName.toLowerCase().includes(keyword)
-      )
+      return props.tasks.filter(task => {
+        const title = getTaskTitle(task) || ''
+        return title.toLowerCase().includes(keyword)
+      })
     })
 
     const formatTime = (timestamp) => {
       if (!timestamp) return '-';
-      const date = new Date(timestamp);
-      return date.toLocaleString('zh-CN');
+      try {
+        const date = new Date(timestamp);
+        return date.toLocaleString('zh-CN');
+      } catch (e) {
+        return String(timestamp)
+      }
     }
     
     const getTaskTitle = (task) => {
-      // 优先使用文件原名，如果没有则显示算法+时间
       if (task.file_name) return task.file_name;
       if (task.original_name) return task.original_name;
-      // 兜底：仍然显示 task_id，避免误显示算法名
       return task.task_id || task.id || '-';
     }
 
     const normalizeStatus = (status) => {
       const s = String(status || '').toLowerCase()
-      // 兼容后端常见状态：queued/running/succeeded/failed/cancelled
       if (s === 'succeeded' || s === 'success' || s === 'completed') return 'completed'
       if (s === 'running' || s === 'processing' || s === 'queued' || s === 'pending') return 'processing'
       if (s === 'failed' || s === 'error') return 'failed'
@@ -165,10 +161,6 @@ export default {
       emit('view-details', task)
     }
 
-    const downloadResults = (task) => {
-      emit('download', task)
-    }
-
     const deleteTask = async (task) => {
       const title = getTaskTitle(task)
       if (!confirm(`确定要删除任务 "${title}" 吗？`)) return
@@ -180,7 +172,6 @@ export default {
           return
         }
         await identificationService.deleteTask(taskId)
-        // 删除成功后直接刷新列表（父组件已有 refresh 逻辑）
         emit('refresh')
       } catch (e) {
         alert(e?.message || '删除失败，请稍后重试')
@@ -189,6 +180,15 @@ export default {
 
     const refreshTasks = () => {
       emit('refresh')
+    }
+    
+    const triggerRefresh = () => {
+      // 在 enter 时触发刷新，让父组件用新 filter 拉数据
+      emit('refresh')
+    }
+
+    const updateUserFilter = (event) => {
+      emit('set-user-filter', event.target.value)
     }
 
     const previousPage = () => {
@@ -211,11 +211,12 @@ export default {
       getStatusText,
       getTaskTitle,
       viewDetails,
-      downloadResults,
       deleteTask,
       refreshTasks,
       previousPage,
-      nextPage
+      nextPage,
+      updateUserFilter,
+      triggerRefresh
     }
   }
 }
@@ -236,6 +237,8 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .history-header h3 {
@@ -256,7 +259,11 @@ export default {
   border: 1px solid #d1d5db;
   border-radius: 6px;
   font-size: 13px;
-  width: 200px;
+  width: 180px;
+}
+
+.user-filter-input {
+  width: 120px;
 }
 
 .search-input:focus {
@@ -347,40 +354,12 @@ export default {
   font-weight: 500;
 }
 
-.task-stats {
-  display: flex;
-  gap: 16px;
-  min-width: 150px;
-}
-
-.stat {
-  text-align: center;
-}
-
-.stat-label {
-  display: block;
-  font-size: 11px;
-  color: #6b7280;
-  margin-bottom: 2px;
-}
-
-.stat-value {
-  display: block;
-  font-size: 14px;
-  font-weight: 600;
-  color: #1f2937;
-}
-
-.stat-value.success {
-  color: #10b981;
-}
-
-.stat-value.error {
-  color: #ef4444;
+.user-id-meta .value {
+  color: #1d4ed8;
 }
 
 .task-status {
-  min-width: 120px;
+  min-width: 80px;
   display: flex;
   justify-content: center;
 }
@@ -388,11 +367,11 @@ export default {
 .status-badge {
   display: inline-block;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: 999px;
   font-size: 12px;
   font-weight: 500;
   text-align: center;
-  width: 100%;
+  min-width: 60px;
 }
 
 .status-badge.completed {
@@ -418,7 +397,7 @@ export default {
 .task-actions {
   display: flex;
   gap: 8px;
-  min-width: 180px;
+  min-width: 120px;
 }
 
 .action-btn {
@@ -438,15 +417,6 @@ export default {
 
 .view-btn:hover {
   background-color: #0d5ccc;
-}
-
-.download-btn {
-  background-color: #10b981;
-  color: white;
-}
-
-.download-btn:hover {
-  background-color: #059669;
 }
 
 .delete-btn {
@@ -504,20 +474,16 @@ export default {
     width: 100%;
   }
 
-  .task-stats {
-    order: 3;
-    width: 100%;
-    margin-top: 8px;
-  }
-
   .task-status {
     order: 2;
+    min-width: unset;
   }
 
   .task-actions {
-    order: 4;
+    order: 3;
     width: 100%;
     margin-top: 8px;
+    justify-content: flex-end;
   }
 }
 
@@ -531,6 +497,7 @@ export default {
   .header-actions {
     width: 100%;
     flex-direction: column;
+    align-items: stretch;
   }
 
   .search-input {
@@ -540,7 +507,7 @@ export default {
   .task-meta {
     flex-direction: column;
     gap: 4px;
+    align-items: flex-start;
   }
 }
 </style>
-

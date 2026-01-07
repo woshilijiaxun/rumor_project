@@ -1,33 +1,38 @@
-from flask import Blueprint
+from flask import Blueprint, g
 from mysql.connector import Error
-from application.common.db import get_db_connection
-from application.common.auth import require_auth
+
+from application.common.auth import require_auth, require_admin
 from application.common.responses import ok, fail
+from application.services import stats_service
 
 bp = Blueprint('stats', __name__)
+
 
 @bp.route('/health', methods=['GET'])
 def health():
     return ok({"message": "服务运行正常"})
 
-@bp.route('/stats', methods=['GET'])
+
+@bp.route('/stats/me', methods=['GET'])
 @require_auth
-def stats():
+def stats_me():
     try:
-        conn = get_db_connection()
-        try:
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT COUNT(*) AS users_total, MAX(created_at) AS latest_user_created_at FROM users")
-            row = cursor.fetchone() or {}
-            return ok({
-                "users_total": row.get('users_total', 0),
-                "latest_user_created_at": row.get('latest_user_created_at')
-            })
-        finally:
-            cursor.close()
-            conn.close()
+        data = stats_service.get_my_stats(user_id=g.user['id'])
+        return ok(data)
     except Error as e:
         return fail("数据库错误: " + str(e), http_code=500, status="error")
     except Exception as e:
         return fail("系统错误: " + str(e), http_code=500, status="error")
 
+
+@bp.route('/stats', methods=['GET'])
+@require_admin
+def stats_overall():
+    """全站统计：仅管理员可用（兼容旧路由 /stats）。"""
+    try:
+        data = stats_service.get_overall_stats()
+        return ok(data)
+    except Error as e:
+        return fail("数据库错误: " + str(e), http_code=500, status="error")
+    except Exception as e:
+        return fail("系统错误: " + str(e), http_code=500, status="error")

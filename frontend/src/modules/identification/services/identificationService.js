@@ -34,8 +34,16 @@ export const identificationService = {
     return data
   },
 
-  async getTasks({ page = 1, page_size = 20 } = {}) {
-    const response = await fetch(`${API_BASE_URL}/tasks?page=${encodeURIComponent(page)}&page_size=${encodeURIComponent(page_size)}` , {
+  async getTasks({ page = 1, page_size = 20, user_id = undefined } = {}) {
+    const qs = new URLSearchParams({
+      page: String(page),
+      page_size: String(page_size)
+    })
+    if (user_id !== undefined && user_id !== null && user_id !== '') {
+      qs.set('user_id', String(user_id))
+    }
+
+    const response = await fetch(`${API_BASE_URL}/tasks?${qs.toString()}` , {
       headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` }
     })
     const data = await response.json().catch(() => null)

@@ -7,7 +7,7 @@
         <p class="welcome-sub">在这里，你可以高效识别潜在的关键传播者，分析传播路径，降低谣言风险。</p>
       </div>
       <div class="welcome-grid">
-        <div class="welcome-item">
+        <div v-if="isAdmin" class="welcome-item">
           <h4>用户管理</h4>
           <p>查看用户列表、基础信息与注册时间，支持后续扩展编辑/禁用等能力。</p>
           <button class="welcome-btn" @click="$router.push('/users')">前往用户管理</button>
@@ -135,7 +135,7 @@
 
     <!-- 快捷入口 -->
     <div class="entry-cards">
-      <div class="entry" @click="$router.push('/users')">
+      <div v-if="isAdmin" class="entry" @click="$router.push('/users')">
         <h4>进入用户管理</h4>
         <p>查看用户、刷新列表</p>
       </div>
@@ -152,12 +152,12 @@
     <!-- 底部统计 -->
     <div class="stats stats-bottom" ref="statsSection">
       <div class="stat-card">
-        <div class="stat-value">{{ statsLoading ? '...' : (stats?.users_total ?? 0) }}</div>
-        <div class="stat-label">用户总数</div>
+        <div class="stat-value">{{ statsLoading ? '...' : (isAdmin ? (stats?.users_total ?? 0) : (stats?.uploads_total ?? 0)) }}</div>
+        <div class="stat-label">{{ isAdmin ? '用户总数' : '我的上传文件数' }}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">{{ statsLoading ? '...' : formatDate(stats?.latest_user_created_at) }}</div>
-        <div class="stat-label">最近注册时间</div>
+        <div class="stat-value">{{ statsLoading ? '...' : (isAdmin ? formatDate(stats?.latest_user_created_at) : (stats?.tasks_total ?? 0)) }}</div>
+        <div class="stat-label">{{ isAdmin ? '最近注册时间' : '我的识别任务总数' }}</div>
       </div>
     </div>
   </div>
@@ -169,6 +169,7 @@ export default {
   name: 'Dashboard',
   data() {
     return {
+      isAdmin: false,
       // 今日辟谣
       debunks: [],
       debunksLoading: false,
@@ -242,7 +243,16 @@ export default {
       return null
     }
   },
-  methods: { 
+  methods: {
+    checkUserRole() {
+      try {
+        const raw = localStorage.getItem('user')
+        const u = raw ? JSON.parse(raw) : null
+        this.isAdmin = u && u.role === 'admin'
+      } catch (e) {
+        this.isAdmin = false
+      }
+    }, 
     fetchDebunks() {
       this.debunksLoading = true
       this.debunksError = ''
@@ -318,7 +328,8 @@ export default {
     fetchStats() {
       this.statsLoading = true
       this.statsError = ''
-      axios.get('/api/stats')
+      const endpoint = this.isAdmin ? '/api/stats' : '/api/stats/me'
+      axios.get(endpoint)
         .then(res => {
           if (res.data?.status === 'success') this.stats = res.data.data || null
           else this.statsError = res.data?.message || '获取统计失败'
@@ -391,7 +402,7 @@ export default {
       })
     }
   },
-  mounted() { this.fetchStats(); this.startCarousel(); this.fetchDebunks(); this.startDebunksPolling(); this.fetchUnionDebunks(); this.startUnionDebunksPolling() },
+  mounted() { this.checkUserRole(); this.fetchStats(); this.startCarousel(); this.fetchDebunks(); this.startDebunksPolling(); this.fetchUnionDebunks(); this.startUnionDebunksPolling() },
   unmounted() { this.stopCarousel(); this.stopDebunksPolling(); this.stopUnionDebunksPolling() }
 }
 </script>
