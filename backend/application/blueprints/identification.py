@@ -4,7 +4,6 @@ from mysql.connector import Error
 from application.common.auth import require_auth, is_admin
 from application.common.responses import ok, fail
 from application.services import identification_service
-from application.services.audit_logs_service import write_log
 
 bp = Blueprint('identification', __name__)
 
@@ -56,7 +55,11 @@ def create_identification_task():
                 user_id=g.user['id'],
                 file_id=file_id,
                 algorithm_key=algorithm_key,
-                params=params
+                params=params,
+                actor_meta={
+                    'ip': request.remote_addr,
+                    'user_agent': request.headers.get('User-Agent', ''),
+                },
             )
         except PermissionError:
             return fail('无权限使用该文件', http_code=403)
@@ -168,24 +171,27 @@ def get_identification_result(task_id: str):
 def delete_identification_task(task_id: str):
     try:
         if is_admin():
-            ok_del = identification_service.delete_task_anyway(task_id=task_id)
+            ok_del = identification_service.delete_task_anyway(
+                task_id=task_id,
+                actor_user_id=g.user.get('id'),
+                actor_meta={
+                    'ip': request.remote_addr,
+                    'user_agent': request.headers.get('User-Agent', ''),
+                },
+            )
         else:
-            ok_del = identification_service.delete_task(task_id=task_id, user_id=g.user['id'])
+            ok_del = identification_service.delete_task(
+                task_id=task_id,
+                user_id=g.user['id'],
+                actor_meta={
+                    'ip': request.remote_addr,
+                    'user_agent': request.headers.get('User-Agent', ''),
+                },
+            )
 
         if not ok_del:
             return fail('任务不存在或无权限', http_code=404)
 
-        # 写审计日志（不影响主流程）
-        try:
-            write_log(
-                actor_user_id=g.user.get('id'),
-                action='TASK_DELETE',
-                target_type='identification_task',
-                target_id=str(task_id),
-                detail={'by_admin': bool(is_admin())}
-            )
-        except Exception:
-            pass
 
         return ok(message='任务已删除')
 
@@ -200,9 +206,23 @@ def delete_identification_task(task_id: str):
 def cancel_identification_task(task_id: str):
     try:
         if is_admin():
-            ok_cancel = identification_service.cancel_task_anyway(task_id=task_id)
+            ok_cancel = identification_service.cancel_task_anyway(
+                task_id=task_id,
+                actor_user_id=g.user.get('id'),
+                actor_meta={
+                    'ip': request.remote_addr,
+                    'user_agent': request.headers.get('User-Agent', ''),
+                },
+            )
         else:
-            ok_cancel = identification_service.cancel_task(task_id=task_id, user_id=g.user['id'])
+            ok_cancel = identification_service.cancel_task(
+                task_id=task_id,
+                user_id=g.user['id'],
+                actor_meta={
+                    'ip': request.remote_addr,
+                    'user_agent': request.headers.get('User-Agent', ''),
+                },
+            )
 
         if not ok_cancel:
             return fail('任务不存在或无权限', http_code=404)

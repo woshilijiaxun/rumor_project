@@ -7,7 +7,6 @@ from mysql.connector import Error
 from application.common.auth import require_auth, is_admin
 from application.common.responses import ok, fail
 from application.services import uploads_service
-from application.services.audit_logs_service import write_log
 
 bp = Blueprint('uploads', __name__)
 
@@ -52,7 +51,11 @@ def upload_file():
             mime_type=mime_type,
             size_bytes=size_bytes,
             storage_path=rel_path,
-            visibility=visibility
+            visibility=visibility,
+            actor_meta={
+                'ip': request.remote_addr,
+                'user_agent': request.headers.get('User-Agent', ''),
+            },
         )
 
         return ok({
@@ -139,20 +142,21 @@ def delete_upload(file_id: int):
         except Exception:
             pass
 
-        # 再删记录
-        uploads_service.delete_upload_record(file_id)
+        # 再删记录（service 内会写审计日志）
+        uploads_service.delete_upload_record(
+            file_id,
+            actor_user_id=g.user.get('id'),
+            actor_meta={
+                'ip': request.remote_addr,
+                'user_agent': request.headers.get('User-Agent', ''),
+            },
+            context={
+                'by_admin': bool(is_admin()),
+                'original_name': row.get('original_name'),
+                'stored_name': row.get('stored_name'),
+            },
+        )
 
-        # 写审计日志（不影响主流程）
-        try:
-            write_log(
-                actor_user_id=g.user.get('id'),
-                action='UPLOAD_DELETE',
-                target_type='upload',
-                target_id=str(file_id),
-                detail={'original_name': row.get('original_name'), 'stored_name': row.get('stored_name')}
-            )
-        except Exception:
-            pass
 
         return ok(message="删除成功")
     except Error as e:

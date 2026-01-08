@@ -125,6 +125,27 @@ def create_tables():
         cursor.execute(create_identification_tasks_table)
         print("✓ 识别任务表创建成功或已存在")
 
+                # 在 create_tables() 函数中，添加以下代码（可以放在其他表创建语句后面）：
+        create_audit_logs_table = """
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            actor_user_id INT NULL,
+            action VARCHAR(100) NOT NULL,
+            target_type VARCHAR(100) NOT NULL,
+            target_id VARCHAR(100) NULL,
+            detail_json TEXT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_actor_user_id (actor_user_id),
+            INDEX idx_action (action),
+            INDEX idx_target (target_type, target_id),
+            INDEX idx_created_at (created_at),
+            CONSTRAINT fk_audit_logs_user FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """
+        cursor.execute(create_audit_logs_table)
+        print("✓ 审计日志表创建成功或已存在")
+
+        
         # 创建识别结果表
         create_identification_results_table = """
         CREATE TABLE IF NOT EXISTS identification_task_results (

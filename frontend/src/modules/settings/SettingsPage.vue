@@ -162,23 +162,7 @@
       </div>
     </section>
 
-    <!-- 4/5) admin 专属：先做展示占位（后续可补接口） -->
-    <section v-if="isAdmin" class="card">
-      <button class="card-header" type="button" @click="toggleSection('admin')">
-        <span class="card-title">管理员设置（预留）</span>
-        <span class="chevron" :class="{ open: sectionOpen.admin }">▾</span>
-      </button>
-      <div v-show="sectionOpen.admin" class="grid">
-        <div class="panel">
-          <h4>系统运行与限制</h4>
-          <p class="hint">可在此集中展示上传限制、图计算限制、force 重新计算策略、健康检查等（后续可接 /health 等接口）。</p>
-        </div>
-        <div class="panel">
-          <h4>算法与模块开关</h4>
-          <p class="hint">可在此集中管理算法启用/停用、模块可见性、默认/推荐算法（部分需要后端支持）。</p>
-        </div>
-      </div>
-    </section>
+    
 
     <div class="savebar">
       <button class="btn btn-secondary" @click="resetPrefs">恢复默认</button>
@@ -562,4 +546,3 @@ input:focus, select:focus {
   margin: 0;
 }
 </style>
-

@@ -22,11 +22,6 @@ def init_db_pool():
     return _pool
 
 
-def get_conn():
-    """兼容旧代码：get_conn() -> get_db_connection()"""
-    return get_db_connection()
-
-
 def get_db_connection():
     """
     获取数据库连接：优先使用连接池；如池未初始化则回退直连。

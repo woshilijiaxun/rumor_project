@@ -1,10 +1,10 @@
 from typing import Optional, Dict
 
-from application.common.db import get_conn
+from application.common.db import get_db_connection
 
 
 def get_config(keys: Optional[list[str]] = None) -> Dict[str, str]:
-    conn = get_conn()
+    conn = get_db_connection()
     cur = conn.cursor(dictionary=True)
     try:
         if keys:
@@ -23,7 +23,7 @@ def set_config_items(items: Dict[str, str], updated_by: Optional[int] = None) ->
     if not items:
         return
 
-    conn = get_conn()
+    conn = get_db_connection()
     cur = conn.cursor()
     try:
         for k, v in items.items():

@@ -4,6 +4,8 @@ from mysql.connector import Error
 from application.common.db import get_db_connection
 from application.common.auth import create_token
 from application.common.responses import ok, fail
+from application.services.audit_logs_service import write_log
+from application.services.audit_context import sanitize_detail
 
 bp = Blueprint('auth', __name__)
 
@@ -23,6 +25,25 @@ def login():
             cursor.execute("SELECT * FROM users WHERE username=%s", (username,))
             user = cursor.fetchone()
             if not user:
+                # 审计：登录失败（用户不存在）
+                try:
+                    write_log(
+                        actor_user_id=None,
+                        action='LOGIN_FAIL',
+                        target_type='user',
+                        target_id=None,
+                        detail=sanitize_detail({
+                            'result': 'fail',
+                            'request': {'username': username},
+                            'reason': 'USER_NOT_FOUND',
+                            'actor': {
+                                'ip': request.remote_addr,
+                                'user_agent': request.headers.get('User-Agent', ''),
+                            },
+                        }),
+                    )
+                except Exception:
+                    pass
                 return fail("用户名或密码错误", http_code=401)
 
             stored = user.get('password') or ''
@@ -43,9 +64,52 @@ def login():
                 upgraded = True
 
             if not ok_flag:
+                # 审计：登录失败（密码错误）
+                try:
+                    write_log(
+                        actor_user_id=user.get('id'),
+                        action='LOGIN_FAIL',
+                        target_type='user',
+                        target_id=str(user.get('id')) if user.get('id') is not None else None,
+                        detail=sanitize_detail({
+                            'result': 'fail',
+                            'request': {'username': username},
+                            'reason': 'INVALID_PASSWORD',
+                            'actor': {
+                                'ip': request.remote_addr,
+                                'user_agent': request.headers.get('User-Agent', ''),
+                            },
+                        }),
+                    )
+                except Exception:
+                    pass
                 return fail("用户名或密码错误", http_code=401)
 
             token = create_token(user['id'], user['username'], user.get('role') or 'user')
+
+            # 审计：登录成功
+            try:
+                write_log(
+                    actor_user_id=user.get('id'),
+                    action='LOGIN_SUCCESS',
+                    target_type='user',
+                    target_id=str(user.get('id')) if user.get('id') is not None else None,
+                    detail=sanitize_detail({
+                        'result': 'success',
+                        'extra': {
+                            'username': user.get('username'),
+                            'role': user.get('role') or 'user',
+                            'upgraded': bool(upgraded),
+                        },
+                        'actor': {
+                            'ip': request.remote_addr,
+                            'user_agent': request.headers.get('User-Agent', ''),
+                        },
+                    }),
+                )
+            except Exception:
+                pass
+
             from flask import jsonify
             payload = {
                 "status": "success",
@@ -88,12 +152,55 @@ def register():
             cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT id FROM users WHERE username=%s", (username,))
             if cursor.fetchone():
+                # 审计：注册失败（用户名已存在）
+                try:
+                    write_log(
+                        actor_user_id=None,
+                        action='REGISTER',
+                        target_type='user',
+                        target_id=None,
+                        detail=sanitize_detail({
+                            'result': 'fail',
+                            'request': {'username': username, 'email': email},
+                            'reason': 'USERNAME_EXISTS',
+                            'actor': {
+                                'ip': request.remote_addr,
+                                'user_agent': request.headers.get('User-Agent', ''),
+                            },
+                        }),
+                    )
+                except Exception:
+                    pass
                 return fail("用户名已存在", http_code=400)
             pwd_hash = generate_password_hash(password)
             cursor.execute("INSERT INTO users (username, password, email) VALUES (%s, %s, %s)", (username, pwd_hash, email))
             conn.commit()
             user_id = cursor.lastrowid
             token = create_token(user_id, username, 'user')
+
+            # 审计：注册成功
+            try:
+                write_log(
+                    actor_user_id=user_id,
+                    action='REGISTER',
+                    target_type='user',
+                    target_id=str(user_id),
+                    detail=sanitize_detail({
+                        'result': 'success',
+                        'extra': {
+                            'username': username,
+                            'email': email,
+                            'role': 'user',
+                        },
+                        'actor': {
+                            'ip': request.remote_addr,
+                            'user_agent': request.headers.get('User-Agent', ''),
+                        },
+                    }),
+                )
+            except Exception:
+                pass
+
             return ok({
                 "token": token,
                 "user": {"id": user_id, "username": username, "email": email, "role": 'user'}

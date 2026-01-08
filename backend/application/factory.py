@@ -67,4 +67,12 @@ def create_app() -> Flask:
     app.register_blueprint(identification_bp, url_prefix='/api')
     app.register_blueprint(admin_bp, url_prefix='/api')
 
+    # 启动审计日志定时清理后台线程
+    try:
+        from .services.audit_maintenance import start_cleanup_daemon
+        start_cleanup_daemon()
+    except Exception:
+        # 不影响主应用启动
+        pass
+
     return app

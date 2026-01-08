@@ -3,7 +3,12 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
+
+from flask import request
+
+from application.services.audit_logs_service import write_log
+from application.services.audit_context import sanitize_detail
 
 from flask import current_app
 
@@ -189,10 +194,18 @@ def _can_use_upload(current_user_id: int, upload_row: Dict[str, Any]) -> bool:
         return False
 
 
-def create_task(app, user_id: int, file_id: int, algorithm_key: str, params: Optional[Dict[str, Any]] = None) -> IdentificationTask:
+def create_task(
+    app,
+    user_id: int,
+    file_id: int,
+    algorithm_key: str,
+    params: Optional[Dict[str, Any]] = None,
+    actor_meta: Optional[Dict[str, Any]] = None,
+) -> IdentificationTask:
     """创建异步识别任务（方案2：algo_key）。
 
     注意：后台线程执行需要 Flask application context，因此必须传入 app 实例。
+    记录审计日志：TASK_CREATE（success/fail）。
     """
     # 同步校验：文件权限（public 或 owner；admin 全放开）
     try:
@@ -201,13 +214,32 @@ def create_task(app, user_id: int, file_id: int, algorithm_key: str, params: Opt
             raise ValueError('文件不存在')
         if not _can_use_upload(user_id, upload_row):
             raise PermissionError('无权限使用该文件')
-    except PermissionError:
-        # 让上层捕获并返回 403
-        raise
-    except ValueError:
-        raise
-    except Exception:
-        # 其它异常不阻塞创建（这里选择阻塞更安全）
+    except Exception as e:
+        # TASK_CREATE 审计日志（失败）- 创建阶段的校验失败
+        try:
+            write_log(
+                actor_user_id=user_id,
+                action='TASK_CREATE',
+                target_type='identification_task',
+                target_id=None,
+                detail=sanitize_detail({
+                    'result': 'fail',
+                    'request': {
+                        'file_id': file_id,
+                        'algorithm_key': (algorithm_key or '').strip(),
+                    },
+                    'error': str(e),
+                    'actor': actor_meta or {},
+                }),
+            )
+        except Exception:
+            pass
+
+        # 维持原语义：让上层返回 403/400 等
+        if isinstance(e, PermissionError):
+            raise
+        if isinstance(e, ValueError):
+            raise
         raise
 
     t = IdentificationTask(
@@ -245,28 +277,125 @@ def create_task(app, user_id: int, file_id: int, algorithm_key: str, params: Opt
         # 不影响任务创建与执行
         pass
 
+    # TASK_CREATE 审计日志（成功）
+    try:
+        safe_params: Dict[str, Any] = {}
+        if isinstance(t.params, dict):
+            # 只记录少量参数并限长，避免写入大对象
+            for k, v in list(t.params.items())[:50]:
+                safe_params[str(k)] = str(v)[:200]
+        write_log(
+            actor_user_id=user_id,
+            action='TASK_CREATE',
+            target_type='identification_task',
+            target_id=str(t.task_id),
+            detail=sanitize_detail({
+                'result': 'success',
+                'request': {
+                    'file_id': file_id,
+                    'algorithm_key': t.algorithm_key,
+                    'params': safe_params,
+                },
+                'actor': actor_meta or {},
+            }),
+        )
+    except Exception:
+        pass
+
     th = threading.Thread(target=_run_task, args=(app, t.task_id), daemon=True)
     th.start()
     return t
 
 
-def delete_task(task_id: str, user_id: int) -> bool:
+def delete_task(
+    task_id: str,
+    user_id: int,
+    actor_meta: Optional[Dict[str, Any]] = None,
+) -> bool:
     try:
         affected = identification_repo.delete_task_by_id(task_id=task_id, user_id=user_id)
-        return affected > 0
-    except Exception:
+        ok_del = affected > 0
+        try:
+            write_log(
+                actor_user_id=user_id,
+                action='TASK_DELETE',
+                target_type='identification_task',
+                target_id=str(task_id),
+                detail=sanitize_detail({
+                    'result': 'success' if ok_del else 'fail',
+                    'extra': {'by_admin': False},
+                    'actor': actor_meta or {},
+                }),
+            )
+        except Exception:
+            pass
+        return ok_del
+    except Exception as e:
+        try:
+            write_log(
+                actor_user_id=user_id,
+                action='TASK_DELETE',
+                target_type='identification_task',
+                target_id=str(task_id),
+                detail=sanitize_detail({
+                    'result': 'fail',
+                    'extra': {'by_admin': False},
+                    'error': str(e),
+                    'actor': actor_meta or {},
+                }),
+            )
+        except Exception:
+            pass
         return False
 
 
-def delete_task_anyway(task_id: str) -> bool:
+def delete_task_anyway(
+    task_id: str,
+    actor_user_id: Optional[int] = None,
+    actor_meta: Optional[Dict[str, Any]] = None,
+) -> bool:
     try:
         affected = identification_repo.delete_task_anyway(task_id=task_id)
-        return affected > 0
-    except Exception:
+        ok_del = affected > 0
+        try:
+            write_log(
+                actor_user_id=actor_user_id,
+                action='TASK_DELETE',
+                target_type='identification_task',
+                target_id=str(task_id),
+                detail=sanitize_detail({
+                    'result': 'success' if ok_del else 'fail',
+                    'extra': {'by_admin': True},
+                    'actor': actor_meta or {},
+                }),
+            )
+        except Exception:
+            pass
+        return ok_del
+    except Exception as e:
+        try:
+            write_log(
+                actor_user_id=actor_user_id,
+                action='TASK_DELETE',
+                target_type='identification_task',
+                target_id=str(task_id),
+                detail=sanitize_detail({
+                    'result': 'fail',
+                    'extra': {'by_admin': True},
+                    'error': str(e),
+                    'actor': actor_meta or {},
+                }),
+            )
+        except Exception:
+            pass
         return False
 
 
-def cancel_task(task_id: str, user_id: int) -> bool:
+def cancel_task(
+    task_id: str,
+    user_id: int,
+    actor_meta: Optional[Dict[str, Any]] = None,
+) -> bool:
     with _tasks_lock:
         t = _tasks.get(task_id)
         if not t:
@@ -279,10 +408,30 @@ def cancel_task(task_id: str, user_id: int) -> bool:
         t.stage = 'cancelled'
         t.message = '任务已取消'
         t.ended_at = _now()
-        return True
+
+    try:
+        write_log(
+            actor_user_id=user_id,
+            action='TASK_CANCEL',
+            target_type='identification_task',
+            target_id=str(task_id),
+            detail=sanitize_detail({
+                'result': 'success',
+                'extra': {'by_admin': False},
+                'actor': actor_meta or {},
+            }),
+        )
+    except Exception:
+        pass
+
+    return True
 
 
-def cancel_task_anyway(task_id: str) -> bool:
+def cancel_task_anyway(
+    task_id: str,
+    actor_user_id: Optional[int] = None,
+    actor_meta: Optional[Dict[str, Any]] = None,
+) -> bool:
     """管理员强制取消运行中任务（仅内存任务）。
 
     对于已落库的历史任务：取消的语义不明确（可能已经结束），这里保持仅取消内存任务。
@@ -297,7 +446,23 @@ def cancel_task_anyway(task_id: str) -> bool:
         t.stage = 'cancelled'
         t.message = '任务已取消(管理员操作)'
         t.ended_at = _now()
-        return True
+
+    try:
+        write_log(
+            actor_user_id=actor_user_id,
+            action='TASK_CANCEL',
+            target_type='identification_task',
+            target_id=str(task_id),
+            detail=sanitize_detail({
+                'result': 'success',
+                'extra': {'by_admin': True},
+                'actor': actor_meta or {},
+            }),
+        )
+    except Exception:
+        pass
+
+    return True
 
 
 def _update_task(task_id: str, **kwargs):
@@ -419,6 +584,47 @@ def _run_task(app, task_id: str):
             result_str_keys = {str(k): v for k, v in (result or {}).items()}
             _update_task(task_id, status=TASK_STATUS_SUCCEEDED, progress=100, stage='succeeded', message='识别完成', ended_at=_now(), result=result_str_keys, error=None)
 
+            # TASK_STATUS_CHANGE（终态成功）
+            try:
+                task2 = get_task(task_id)
+                write_log(
+                    actor_user_id=getattr(task2, 'user_id', None),
+                    action='TASK_STATUS_CHANGE',
+                    target_type='identification_task',
+                    target_id=str(task_id),
+                    detail=sanitize_detail({
+                        'result': 'success',
+                        'extra': {
+                            'status': TASK_STATUS_SUCCEEDED,
+                            'file_id': getattr(task2, 'file_id', None),
+                            'algorithm_key': getattr(task2, 'algorithm_key', None),
+                        },
+                    }),
+                )
+            except Exception:
+                pass
+
     except Exception as e:
         _update_task(task_id, status=TASK_STATUS_FAILED, progress=100, stage='failed', message='系统错误', ended_at=_now(),
                      error={'code': 'INTERNAL_ERROR', 'message': str(e)})
+
+        # TASK_STATUS_CHANGE（终态失败）
+        try:
+            task2 = get_task(task_id)
+            write_log(
+                actor_user_id=getattr(task2, 'user_id', None),
+                action='TASK_STATUS_CHANGE',
+                target_type='identification_task',
+                target_id=str(task_id),
+                detail=sanitize_detail({
+                    'result': 'fail',
+                    'extra': {
+                        'status': TASK_STATUS_FAILED,
+                        'file_id': getattr(task2, 'file_id', None),
+                        'algorithm_key': getattr(task2, 'algorithm_key', None),
+                    },
+                    'error': str(e),
+                }),
+            )
+        except Exception:
+            pass
