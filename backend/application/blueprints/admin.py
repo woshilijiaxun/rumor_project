@@ -1,4 +1,4 @@
-from flask import Blueprint, request, g, Response
+from flask import Blueprint, request, g, Response, current_app
 from mysql.connector import Error
 
 from application.common.auth import require_auth, require_admin
@@ -6,8 +6,102 @@ from application.common.responses import ok, fail
 from application.services.system_config_service import get_system_config, update_system_config
 from application.services.audit_logs_service import query_logs
 from application.services.audit_logs_export_service import fetch_export_rows, generate_csv_bytes, generate_excel_bytes
+from application.services.health_service import get_last_health_report, force_refresh_health_check
 
 bp = Blueprint('admin', __name__)
+
+
+@bp.route('/admin/health', methods=['GET'])
+@require_auth
+@require_admin
+def admin_health_check():
+    """获取缓存的健康检查结果（仅管理员，只读）。"""
+    payload = get_last_health_report()
+    if payload is None:
+        # 尚未生成（刚启动）
+        return ok({
+            'overall': 'UNKNOWN',
+            'checked_at': None,
+            'duration_ms': 0,
+            'items': [],
+            'message': '健康检查尚未生成，请稍后刷新。'
+        })
+    return ok(payload)
+
+
+@bp.route('/admin/health/refresh', methods=['POST'])
+@require_auth
+@require_admin
+def admin_health_refresh():
+    """手动强制刷新一次健康检查。"""
+    try:
+        payload = force_refresh_health_check(current_app)
+        return ok(payload)
+    except Exception as e:
+        return fail('刷新健康检查失败: ' + str(e), http_code=500)
+
+
+@bp.route('/admin/health/error-summary', methods=['GET'])
+@require_auth
+@require_admin
+def get_error_summary():
+    """获取最近15分钟的错误日志摘要。"""
+    from datetime import datetime, timedelta, timezone
+
+    from application.common.db import get_db_connection
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(dictionary=True)
+
+        time_threshold = datetime.now(timezone.utc) - timedelta(minutes=15)
+
+        # 筛选 action 中带 FAIL，或 detail_json 中包含常见错误关键词的日志
+        query = """
+        SELECT
+            action,
+            COUNT(*) as error_count,
+            MAX(created_at) as last_occurred
+        FROM
+            audit_logs
+        WHERE
+            created_at >= %s
+            AND (action LIKE '%%FAIL%%' OR detail_json LIKE '%%"result": "fail"%%' OR detail_json LIKE '%%error%%')
+        GROUP BY
+            action
+        ORDER BY
+            error_count DESC
+        LIMIT 5
+        """
+
+        cur.execute(query, (time_threshold,))
+        summary = cur.fetchall() or []
+
+        # 单独计算总数（避免 GROUP BY 影响）
+        total_query = """
+        SELECT COUNT(1) as c FROM audit_logs
+        WHERE created_at >= %s
+        AND (action LIKE '%%FAIL%%' OR detail_json LIKE '%%"result": "fail"%%' OR detail_json LIKE '%%error%%')
+        """
+        cur.execute(total_query, (time_threshold,))
+        total_errors = (cur.fetchone() or {}).get('c') or 0
+
+        return ok({
+            'summary': summary,
+            'total_errors': total_errors,
+        })
+
+    except Error as e:
+        return fail(f"获取错误摘要失败（数据库错误）: {str(e)}", http_code=500)
+    except Exception as e:
+        return fail(f"获取错误摘要失败（系统错误）: {str(e)}", http_code=500)
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 
 @bp.route('/admin/config', methods=['GET'])

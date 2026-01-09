@@ -291,7 +291,7 @@
       </div>
     </section>
 
-    <!-- 健康检查（保留占位） -->
+    <!-- 健康检查 -->
     <section class="card">
       <button class="card-header" type="button" @click="toggle('health')">
         <span class="card-title">系统健康检查</span>
@@ -299,15 +299,97 @@
       </button>
 
       <div v-show="openMap.health" class="card-body">
-        <p class="hint">即将支持：/health、数据库连接、磁盘空间等（展示即可）。</p>
-        <button class="btn btn-secondary" disabled>刷新状态（待后端接口）</button>
+        <div class="health-header">
+          <div class="health-header-left">
+            <div class="health-overall-line" v-if="health.data">
+              <span class="health-pill" :class="healthPillClass(health.data.overall)">
+                {{ healthOverallText(health.data.overall) }}
+              </span>
+              <span class="health-overall-sub">
+                最后检查：<span class="mono">{{ formatIso(health.data.checked_at) }}</span>
+                <span class="mono" v-if="health.data.duration_ms">（{{ health.data.duration_ms }}ms）</span>
+                <span class="health-auto">
+                  <span class="health-auto-hint">提示：自动刷新间隔 {{ HEALTH_REFRESH_INTERVAL_MIN }} 分钟</span>
+                  <span class="health-auto-next">{{ nextRefreshText }}</span>
+                </span>
+              </span>
+            </div>
+            <div v-else class="health-overall-line">
+              <span class="health-pill neutral">未检查</span>
+              <span class="health-overall-sub">点击右侧按钮获取当前状态</span>
+            </div>
+
+            <div v-if="health.error" class="health-error">{{ health.error }}</div>
+          </div>
+
+          <div class="health-header-right">
+            <button class="btn btn-secondary" type="button" @click="refreshHealth" :disabled="health.loading">
+              <span v-if="health.loading">检查中...</span>
+              <span v-else>刷新</span>
+            </button>
+          </div>
+        </div>
+
+        <div v-if="health.data" class="health-grid">
+          <div v-for="it in (health.data.items || [])" :key="it.key" class="health-card">
+            <div class="health-card-top">
+              <div class="health-card-title">
+                <span class="health-card-name">{{ it.name }}</span>
+                <span class="health-badge" :class="healthBadgeClass(it.status)">{{ it.status }}</span>
+              </div>
+              <div class="health-card-msg">{{ it.message || '' }}</div>
+              <div v-if="it.key === 'mysql'" class="health-card-tip">
+                说明：连接池是本服务进程的连接复用容量；连接数是数据库实例当前总连接（包含其他客户端）。
+              </div>
+            </div>
+
+            <div v-if="it.metrics" class="health-kv">
+              <div v-for="(v, k) in it.metrics" :key="k" class="health-kv-row" v-show="prettyMetricValue(it.key, k, v) !== null">
+                <div class="health-kv-k mono">{{ prettyMetricKey(it.key, k) }}</div>
+                <div class="health-kv-v mono">{{ prettyMetricValue(it.key, k, v) }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 错误摘要（audit_logs，最近15分钟） -->
+          <div class="health-card">
+            <div class="health-card-top">
+              <div class="health-card-title">
+                <span class="health-card-name">错误摘要（最近15分钟）</span>
+                <span class="health-badge" :class="errorSummary.total_errors > 0 ? 'crit' : 'ok'">
+                  {{ errorSummary.total_errors }} 条
+                </span>
+              </div>
+              <div class="health-card-msg">统计失败/错误相关日志次数。</div>
+            </div>
+
+            <div class="health-kv">
+              <div v-if="errorSummary.loading" class="health-muted">加载中...</div>
+              <div v-else-if="errorSummary.error" class="health-error-inline">{{ errorSummary.error }}</div>
+              <div v-else-if="(errorSummary.summary || []).length === 0" class="health-muted">暂无错误</div>
+              <div v-else class="health-summary">
+                <div v-for="row in errorSummary.summary" :key="row.action" class="health-summary-row">
+                  <div class="health-summary-left">
+                    <div class="health-summary-action mono">{{ row.action }}</div>
+                    <div class="health-summary-sub">最近：{{ formatTimeAgo(row.last_occurred) }}</div>
+                  </div>
+                  <div class="health-summary-right">
+                    <span class="health-count">{{ row.error_count }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <p v-else class="hint">点击“刷新状态”获取当前系统健康信息。</p>
       </div>
     </section>
   </div>
 </template>
 
 <script>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 
 export default {
@@ -332,9 +414,68 @@ export default {
         } else if (k === 'algo' && !algorithmsInitialized.value) {
           fetchAlgorithms()
           algorithmsInitialized.value = true
+        } else if (k === 'health' && !healthInitialized.value) {
+          fetchHealth()
+          healthInitialized.value = true
         }
       }
     }
+
+    // 健康检查：页面打开时每 10 分钟自动拉取一次缓存结果（不会触发真实检查）
+    const HEALTH_REFRESH_INTERVAL_MIN = 10
+    const HEALTH_REFRESH_INTERVAL_MS = HEALTH_REFRESH_INTERVAL_MIN * 60 * 1000
+
+    let healthInterval = null
+    let healthCountdownInterval = null
+
+    const nextRefreshAt = ref(Date.now() + HEALTH_REFRESH_INTERVAL_MS)
+    const remainingMinutes = ref(HEALTH_REFRESH_INTERVAL_MIN)
+
+    const updateRemainingMinutes = () => {
+      const diffMs = nextRefreshAt.value - Date.now()
+      const m = Math.max(0, Math.ceil(diffMs / 60000))
+      remainingMinutes.value = m
+    }
+
+    const resetNextRefresh = () => {
+      nextRefreshAt.value = Date.now() + HEALTH_REFRESH_INTERVAL_MS
+      updateRemainingMinutes()
+    }
+
+    const startHealthPolling = () => {
+      if (healthInterval) return
+      resetNextRefresh()
+      healthInterval = setInterval(() => {
+        if (openMap.health) fetchHealth()
+        resetNextRefresh()
+      }, HEALTH_REFRESH_INTERVAL_MS)
+
+      if (!healthCountdownInterval) {
+        healthCountdownInterval = setInterval(() => {
+          updateRemainingMinutes()
+        }, 1000)
+      }
+    }
+    const stopHealthPolling = () => {
+      if (!healthInterval && !healthCountdownInterval) return
+      if (healthInterval) clearInterval(healthInterval)
+      if (healthCountdownInterval) clearInterval(healthCountdownInterval)
+      healthInterval = null
+      healthCountdownInterval = null
+    }
+
+    const nextRefreshText = computed(() => {
+      if (!openMap.health) return ''
+      return `距离下次自动刷新还有 ${remainingMinutes.value} 分钟`
+    })
+
+    onMounted(() => {
+      startHealthPolling()
+    })
+
+    onBeforeUnmount(() => {
+      stopHealthPolling()
+    })
 
     // 审计日志
     const auditLogsInitialized = ref(false)
@@ -357,6 +498,238 @@ export default {
       export: false,
       algorithms: false
     })
+
+    // 健康检查
+    const healthInitialized = ref(false)
+    const health = reactive({
+      loading: false,
+      error: '',
+      data: null
+    })
+
+    const fetchHealth = async () => {
+      if (health.loading) return
+      health.loading = true
+      health.error = ''
+      try {
+        const res = await axios.get('/api/admin/health')
+        const d = res?.data
+        if (d?.status === 'success' && d?.data) {
+          health.data = d.data
+          fetchErrorSummary()
+        } else {
+          throw new Error(d?.message || '获取健康检查失败')
+        }
+      } catch (e) {
+        health.data = null
+        health.error = e?.response?.data?.message || e?.message || '获取健康检查失败'
+      } finally {
+        health.loading = false
+      }
+    }
+
+    // 手动刷新：调用后端 refresh 接口，然后再拉一次缓存结果
+    const refreshHealth = async () => {
+      if (health.loading) return
+      health.loading = true
+      health.error = ''
+      try {
+        const res = await axios.post('/api/admin/health/refresh')
+        const d = res?.data
+        if (d?.status === 'success') {
+          // refresh 接口本身就返回 payload，直接更新
+          health.data = d.data
+          fetchErrorSummary()
+        } else {
+          throw new Error(d?.message || '刷新健康检查失败')
+        }
+      } catch (e) {
+        health.error = e?.response?.data?.message || e?.message || '刷新健康检查失败'
+      } finally {
+        health.loading = false
+      }
+    }
+
+    // 错误摘要（基于 audit_logs）
+    const errorSummary = reactive({
+      loading: false,
+      error: '',
+      summary: [],
+      total_errors: 0
+    })
+
+    const fetchErrorSummary = async () => {
+      if (errorSummary.loading) return
+      errorSummary.loading = true
+      errorSummary.error = ''
+      try {
+        const res = await axios.get('/api/admin/health/error-summary')
+        const d = res?.data
+        if (d?.status === 'success' && d?.data) {
+          errorSummary.summary = d.data.summary || []
+          errorSummary.total_errors = d.data.total_errors || 0
+        } else {
+          throw new Error(d?.message || '获取错误摘要失败')
+        }
+      } catch (e) {
+        errorSummary.summary = []
+        errorSummary.total_errors = 0
+        errorSummary.error = e?.response?.data?.message || e?.message || '获取错误摘要失败'
+      } finally {
+        errorSummary.loading = false
+      }
+    }
+
+    const formatTimeAgo = (timeStr) => {
+      if (!timeStr) return '未知'
+      const time = new Date(timeStr)
+      const now = new Date()
+      const diff = Math.floor((now - time) / 1000)
+      if (diff < 60) return `${diff}秒前`
+      if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`
+      if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`
+      return `${Math.floor(diff / 86400)}天前`
+    }
+
+    const healthBadgeClass = (status) => {
+      if (status === 'OK') return 'ok'
+      if (status === 'WARN') return 'warn'
+      if (status === 'CRIT') return 'crit'
+      return 'neutral'
+    }
+
+    const healthPillClass = (status) => {
+      if (status === 'OK') return 'ok'
+      if (status === 'WARN') return 'warn'
+      if (status === 'CRIT') return 'crit'
+      return 'neutral'
+    }
+
+    const healthOverallText = (status) => {
+      if (status === 'OK') return '健康'
+      if (status === 'WARN') return '存在风险'
+      if (status === 'CRIT') return '不可用'
+      return '未知'
+    }
+
+    const formatIso = (iso) => {
+      if (!iso) return ''
+      const d = new Date(iso)
+      if (Number.isNaN(d.getTime())) return String(iso)
+      return d.toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      }).replace(/\//g, '-')
+    }
+
+    const prettyMetricKey = (itemKey, metricKey) => {
+      // App
+      if (itemKey === 'app') {
+        const map = {
+          pid: 'PID',
+          server_time: '服务器时间(UTC)',
+          uptime_human: '运行时长',
+          uptime_seconds: '运行时长(秒)',
+          memory_rss_mb: '进程内存(RSS/MB)',
+          num_threads: '线程数',
+          python_version: 'Python版本',
+          flask_version: 'Flask版本',
+          debug: 'DEBUG',
+          check_ms: '检查耗时(ms)'
+        }
+        return map[metricKey] || metricKey
+      }
+
+      // MySQL
+      if (itemKey === 'mysql') {
+        const map = {
+          latency_ms: '连接延迟(ms)',
+          threads_connected: '连接数',
+          threads_running: '运行中线程',
+          pool_name: '连接池',
+          pool_size: '连接池大小',
+          check_ms: '检查耗时(ms)'
+        }
+        return map[metricKey] || metricKey
+      }
+
+      // Disk (upload dir)
+      if (itemKey === 'disk') {
+        const map = {
+          check_ms: '检查耗时(ms)',
+          path: '路径',
+          total_gb: '总空间(GB)',
+          used_gb: '已用空间(GB)',
+          free_gb: '可用空间(GB)',
+          percent_used: '已用空间(%)'
+        }
+        return map[metricKey] || metricKey
+      }
+
+      // Process / System snapshot
+      if (itemKey === 'process') {
+        const map = {
+          pid: 'PID',
+
+          // CPU
+          cpu_percent: 'CPU占用(%)',
+          cpu_user_s: 'CPU时间-user(s)',
+          cpu_system_s: 'CPU时间-system(s)',
+
+          // Memory
+          memory_rss_mb: '进程内存(RSS/MB)',
+          sys_mem_percent: '系统内存已用(%)',
+          sys_mem_available_gb: '系统可用内存(GB)',
+
+          // Network speed
+          net_sent_kbps: '网络发送速率(KB/s)',
+          net_recv_kbps: '网络接收速率(KB/s)',
+          net_total_kbps: '网络总速率(KB/s)',
+
+          // Disk
+          disk_percent_used: '磁盘已用(%)',
+          disk_free_gb: '磁盘可用(GB)',
+
+          // Others
+          num_threads: '线程数',
+          open_files_count: '打开文件数',
+          check_ms: '检查耗时(ms)'
+        }
+        return map[metricKey] || metricKey
+      }
+
+      return metricKey
+    }
+
+    const prettyMetricValue = (itemKey, metricKey, value) => {
+      // 避免重复：有 uptime_human 时就不再展示 uptime_seconds
+      if (itemKey === 'app' && metricKey === 'uptime_seconds') {
+        // 有 uptime_human 时，不再展示秒数，避免信息重复
+        return null
+      }
+      if (value === null || value === undefined || value === '') return '-'
+      return String(value)
+    }
+
+    // process 卡片：详细指标折叠
+    const expandedMetrics = reactive({})
+    const toggleMetrics = (key) => {
+      expandedMetrics[key] = !expandedMetrics[key]
+    }
+
+    const gaugeStyle = (value, max = 100) => {
+      const pct = Math.max(0, Math.min((value / max) * 100, 100))
+      const color = pct > 90 ? '#ef4444' : pct > 70 ? '#f59e0b' : '#22c55e'
+      return {
+        background: `conic-gradient(${color} ${pct}%, #e5e7eb 0)`
+      }
+    }
 
     const exportType = ref('')
 
@@ -693,6 +1066,7 @@ export default {
       if (!dateTimeStr) return ''
       const date = new Date(dateTimeStr)
       return date.toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai',
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
@@ -795,6 +1169,8 @@ export default {
     return {
       openMap,
       toggle,
+      HEALTH_REFRESH_INTERVAL_MIN,
+      nextRefreshText,
       // 审计日志
       auditFilters,
       auditLogs,
@@ -829,7 +1205,23 @@ export default {
       disableAll,
       tooltip,
       showAlgoTip,
-      hideAlgoTip
+      hideAlgoTip,
+      // 健康检查
+      health,
+      fetchHealth,
+      refreshHealth,
+      healthBadgeClass,
+      healthPillClass,
+      healthOverallText,
+      formatIso,
+      // error summary
+      errorSummary,
+      formatTimeAgo,
+      prettyMetricKey,
+      prettyMetricValue,
+      expandedMetrics,
+      toggleMetrics,
+      gaugeStyle
     }
   }
 }
@@ -1155,6 +1547,263 @@ export default {
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* 健康检查（视觉优化：概览 + 卡片网格） */
+.health-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
+}
+
+.health-header-left {
+  min-width: 0;
+}
+
+.health-overall-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.health-overall-sub {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.health-auto {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.health-auto-hint {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.health-auto-next {
+  font-size: 12px;
+  color: #111827;
+  font-weight: 600;
+}
+
+.health-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #991b1b;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.health-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  border: 1px solid transparent;
+}
+
+.health-pill.ok {
+  background: #d1fae5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+
+.health-pill.warn {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+.health-pill.crit {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+
+.health-pill.neutral {
+  background: #f3f4f6;
+  color: #374151;
+  border-color: #e5e7eb;
+}
+
+.health-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 820px) {
+  .health-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.health-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  background: #ffffff;
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.04);
+}
+
+.health-card-top {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.health-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.health-card-name {
+  font-weight: 900;
+  color: #111827;
+}
+
+.health-card-msg {
+  font-size: 12px;
+  color: #374151;
+  line-height: 1.5;
+}
+
+.health-card-tip {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.5;
+}
+
+.health-badge {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.health-badge.ok {
+  background: #ecfdf5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+
+.health-badge.warn {
+  background: #fffbeb;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+.health-badge.crit {
+  background: #fef2f2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+
+.health-badge.neutral {
+  background: #f3f4f6;
+  color: #374151;
+  border-color: #e5e7eb;
+}
+
+.health-kv {
+  margin-top: 10px;
+  border-top: 1px dashed #e5e7eb;
+  padding-top: 10px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.health-kv-row {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 520px) {
+  .health-kv-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.health-kv-k {
+  color: #6b7280;
+}
+
+.health-kv-v {
+  color: #111827;
+  word-break: break-all;
+}
+
+.health-muted {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.health-error-inline {
+  font-size: 12px;
+  color: #991b1b;
+}
+
+.health-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.health-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #f3f4f6;
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.health-summary-action {
+  font-weight: 800;
+  color: #111827;
+}
+
+.health-summary-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.health-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #111827;
+  color: #fff;
+  font-weight: 900;
+  font-size: 12px;
 }
 
 .btn-secondary {

@@ -17,7 +17,8 @@ def init_db_pool():
         user=Config.DB_USER,
         password=Config.DB_PASSWORD,
         database=Config.DB_NAME,
-        charset=Config.DB_CHARSET
+        charset=Config.DB_CHARSET,
+        time_zone='+8:00'
     )
     return _pool
 
@@ -40,7 +41,8 @@ def get_db_connection():
                     user=Config.DB_USER,
                     password=Config.DB_PASSWORD,
                     database=Config.DB_NAME,
-                    charset=Config.DB_CHARSET
+                    charset=Config.DB_CHARSET,
+                    time_zone='+8:00'
                 )
         return _pool.get_connection()
     except Exception as e:
