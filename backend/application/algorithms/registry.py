@@ -53,14 +53,20 @@ registry = AlgorithmRegistry()
 try:
     from .example_textline_algo import run as _example_run
     from .degree_centrality_algo import run as _degree_run
+    from .betweenness_centrality_algo import run as _betweenness_run
+    from .closeness_centrality_algo import run as _closeness_run
     from .hgc_algo import run as _hgc_run
     from .cr_algo import run as _cr_run
+    from .mgnn_al_algo import run as _mgnn_al_run
 
     # 该 key 必须与你数据库 algorithms.algo_key 一致
     registry.register_key('example_textline_algo', '示例-按行读取', _example_run)
     registry.register_key('dc', '度中心性', _degree_run)
+    registry.register_key('bc', '介数中心性', _betweenness_run)
+    registry.register_key('cc', '接近中心性', _closeness_run)
     registry.register_key('cr', '圈比', _cr_run)
     registry.register_key('hgc', 'HGC算法', _hgc_run)
+    registry.register_key('mgnn-al', 'MGNN_AL', _mgnn_al_run)
 except Exception:
     pass
 
