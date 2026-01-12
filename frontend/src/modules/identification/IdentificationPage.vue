@@ -107,7 +107,7 @@
       <div class="bottom-row">
         <div class="left-panel">
           <!-- 网络可视化卡片 -->
-          <div class="card" v-if="!(tempSelectedFile && tempSelectedFile?.id !== selectedExistingFile?.id)">
+          <div ref="visualCardRef" class="card">
             <h2>网络拓扑可视化</h2>
             <div v-if="visualLoading" class="loading-state">
               <p>可视化生成中...</p>
@@ -151,11 +151,170 @@
               <p class="hint">选择文件后，点击"可视化网络"按钮</p>
             </div>
           </div>
+          <!-- 潜在路径预测（概率传播图） -->
+      <div class="propagation-row">
+        <div class="card">
+          <h2>潜在路径预测</h2>
 
+          <div class="form-grid">
+            <div class="form-group">
+              <label>任务来源（task_id）</label>
+              <input v-model.trim="propTaskId" class="form-control" type="text" placeholder="默认自动使用当前识别任务" />
+            </div>
+
+            <div class="form-group">
+              <label>模式</label>
+              <select v-model="propMode" class="form-control">
+                <option value="single">single（单源逐个）</option>
+                <option value="multi">multi（多源联合）</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Top-K（k）</label>
+              <input v-model.number="propK" class="form-control" type="number" min="1" step="1" />
+            </div>
+
+            <div class="form-group">
+              <label>beta（可为空）</label>
+              <input v-model.trim="propBeta" class="form-control" type="text" placeholder="为空则后端自动使用阈值" />
+            </div>
+
+            <div class="form-group">
+              <label>仿真次数（num_simulations）</label>
+              <select v-model.number="propNumSimulations" class="form-control">
+                <option :value="200">200</option>
+                <option :value="500">500</option>
+                <option :value="1000">1000</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>边阈值（前端过滤）</label>
+              <input v-model.number="edgeProbThreshold" class="form-control" type="number" min="0" max="1" step="0.01" />
+            </div>
+
+            <div class="form-group">
+              <label>Top 边数（性能保护）</label>
+              <input v-model.number="topEdgesLimit" class="form-control" type="number" min="1" step="1" />
+            </div>
+
+            <div class="form-group" v-if="propMode === 'single'">
+              <label>Seed 选择</label>
+              <select v-model="selectedSeed" class="form-control" :disabled="!availableSeeds.length">
+                <option value="">-- 请选择 seed --</option>
+                <option v-for="s in availableSeeds" :key="s" :value="s">{{ s }}</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="action-buttons">
+            <button class="btn btn-primary" type="button" :disabled="propLoading" @click="startPropagation">
+              {{ propLoading ? '预测中...' : '开始预测' }}
+            </button>
+            <button class="btn btn-secondary" type="button" :disabled="propLoading" @click="clearPropagation">
+              清空预测结果
+            </button>
+          </div>
+
+          <div v-if="propError" class="error-state">
+            <p>{{ propError }}</p>
+          </div>
+          <div v-else-if="propInfo" class="loading-state">
+            <p>{{ propInfo }}</p>
+          </div>
+
+          <div v-if="propGraphForView" class="prop-results">
+            <div class="prop-graph">
+              <GraphView :graph="propGraphForView" height="420px" />
+            </div>
+
+            <div class="prop-edges">
+              <h3 class="sub-title">Top 边（按概率降序）</h3>
+              <div class="edges-meta">共 {{ filteredEdgesCount }} 条边（阈值过滤后），展示前 {{ topEdgesPreviewLimit }} 条</div>
+              <div class="edges-list">
+                <table class="results-table">
+                  <thead>
+                    <tr>
+                      <th>序号</th>
+                      <th>边</th>
+                      <th>概率</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(e, idx) in topEdgesPreview" :key="idx">
+                      <td>{{ idx + 1 }}</td>
+                      <td class="data-cell">{{ e.source }} → {{ e.target }}</td>
+                      <td class="result-cell">{{ e.probLabel }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 文件选择弹出框（独立于布局） -->
+      <div v-if="showFileModal" class="modal-overlay" @click.self="closeFileModal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>选择文件</h3>
+            <button class="modal-close" @click="closeFileModal">×</button>
+          </div>
+          <div class="modal-body">
+            <div v-if="loadingExistingFiles" class="loading-state">
+              <p>加载文件列表中...</p>
+            </div>
+            <div v-else-if="existingFilesError" class="error-state">
+              <p>{{ existingFilesError }}</p>
+              <button @click="loadExistingFiles" class="retry-btn">重试</button>
+            </div>
+            <template v-else>
+              <div class="existing-filter-bar">
+                <input 
+                  v-model="existingSearch" 
+                  type="text" 
+                  class="existing-search-input" 
+                  placeholder="搜索已有文件名或类型..."
+                />
+              </div>
+              <div v-if="totalExistingFiles === 0" class="empty-state">
+                <p>暂无可用文件</p>
+              </div>
+              <div v-else class="files-list" ref="filesListRef">
+                <div 
+                  v-for="file in displayedExistingFiles" 
+                  :key="file.id"
+                  class="file-item"
+                  :class="{ selected: tempSelectedFile?.id === file.id }"
+                  @click="selectTempFileAndClose(file)"
+                >
+                  <div class="file-info">
+                    <div class="file-name">{{ getFileNameWithoutExt(file.original_name) }}</div>
+                    <div class="file-meta">
+                      <span class="file-type">{{ getFileExtension(file.original_name) }}</span>
+                      <span class="file-size">{{ formatFileSize(file.size_bytes) }}</span>
+                      <span class="file-date">{{ formatDate(file.created_at) }}</span>
+                    </div>
+                  </div>
+                  <div class="file-checkbox">
+                    <input 
+                      type="radio" 
+                      :checked="tempSelectedFile?.id === file.id"
+                      @change="selectTempFileAndClose(file)"
+                    />
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
         </div>
 
         <div class="right-panel">
-          <div class="card">
+          <div class="card identification-results-card" :style="rightCardStyle">
             <h2>识别结果</h2>
             
             <!-- 进度条 -->
@@ -236,62 +395,7 @@
         </div>
       </div>
 
-      <!-- 文件选择弹出框（独立于布局） -->
-      <div v-if="showFileModal" class="modal-overlay" @click.self="closeFileModal">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>选择文件</h3>
-            <button class="modal-close" @click="closeFileModal">×</button>
-          </div>
-          <div class="modal-body">
-            <div v-if="loadingExistingFiles" class="loading-state">
-              <p>加载文件列表中...</p>
-            </div>
-            <div v-else-if="existingFilesError" class="error-state">
-              <p>{{ existingFilesError }}</p>
-              <button @click="loadExistingFiles" class="retry-btn">重试</button>
-            </div>
-            <template v-else>
-              <div class="existing-filter-bar">
-                <input 
-                  v-model="existingSearch" 
-                  type="text" 
-                  class="existing-search-input" 
-                  placeholder="搜索已有文件名或类型..."
-                />
-              </div>
-              <div v-if="totalExistingFiles === 0" class="empty-state">
-                <p>暂无可用文件</p>
-              </div>
-              <div v-else class="files-list" ref="filesListRef">
-                <div 
-                  v-for="file in displayedExistingFiles" 
-                  :key="file.id"
-                  class="file-item"
-                  :class="{ selected: tempSelectedFile?.id === file.id }"
-                  @click="selectTempFileAndClose(file)"
-                >
-                  <div class="file-info">
-                    <div class="file-name">{{ getFileNameWithoutExt(file.original_name) }}</div>
-                    <div class="file-meta">
-                      <span class="file-type">{{ getFileExtension(file.original_name) }}</span>
-                      <span class="file-size">{{ formatFileSize(file.size_bytes) }}</span>
-                      <span class="file-date">{{ formatDate(file.created_at) }}</span>
-                    </div>
-                  </div>
-                  <div class="file-checkbox">
-                    <input 
-                      type="radio" 
-                      :checked="tempSelectedFile?.id === file.id"
-                      @change="selectTempFileAndClose(file)"
-                    />
-                  </div>
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
-      </div>
+      
     </div>
     <TaskHistoryModal
       v-if="showHistoryModal"
@@ -314,6 +418,7 @@
 
 <script>
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import GraphView from './components/GraphView.vue'
@@ -322,12 +427,98 @@ import TaskHistoryModal from './components/TaskHistoryModal.vue'
 import { identificationService } from './services/identificationService'
 import { settingsStore } from '../settings/settingsStore'
 
+const buildGraphFromPropagation = (payload, { edgeProbThreshold = 0, topEdgesLimit = 200 } = {}) => {
+  const rawEdges = Array.isArray(payload?.edges) ? payload.edges : (Array.isArray(payload?.links) ? payload.links : [])
+  const rawNodes = Array.isArray(payload?.nodes) ? payload.nodes : []
+
+  // 兼容后端返回为 map：{"u|v": prob, ...}
+  const mapEdges = (!Array.isArray(payload) && payload && typeof payload === 'object' && !Array.isArray(payload?.edges) && !Array.isArray(payload?.links) && !Array.isArray(payload?.nodes))
+    ? Object.entries(payload)
+    : null
+
+  const edges = (mapEdges ? mapEdges.map(([k, v]) => {
+    const key = String(k)
+    const parts = key.split('|')
+    if (parts.length < 2) return null
+    const source = parts[0]
+    const target = parts[1]
+    const p = Number(v)
+    return {
+      source: String(source),
+      target: String(target),
+      prob: Number.isFinite(p) ? p : 0,
+    }
+  }) : rawEdges.map(e => {
+      const source = e?.source ?? e?.from ?? e?.u
+      const target = e?.target ?? e?.to ?? e?.v
+      const prob = e?.prob ?? e?.p ?? e?.probability ?? e?.value ?? e?.weight ?? e?.score
+      if (source == null || target == null) return null
+      const p = Number(prob)
+      return {
+        source: String(source),
+        target: String(target),
+        prob: Number.isFinite(p) ? p : 0,
+      }
+    }))
+    .filter(Boolean)
+
+  const filtered = edges
+    .filter(e => (Number.isFinite(e.prob) ? e.prob : 0) >= Number(edgeProbThreshold || 0))
+    .sort((a, b) => (b.prob || 0) - (a.prob || 0))
+    .slice(0, Math.max(1, Number(topEdgesLimit || 200)))
+
+  const nodeSet = new Set()
+  filtered.forEach(e => {
+    nodeSet.add(String(e.source))
+    nodeSet.add(String(e.target))
+  })
+
+  rawNodes.forEach(n => {
+    const id = n?.id ?? n?.node_id ?? n?.name
+    if (id == null) return
+    nodeSet.add(String(id))
+  })
+
+  const nodes = Array.from(nodeSet).map(id => ({ id, label: id }))
+
+  return {
+    graph: {
+      nodes,
+      edges: filtered.map(e => ({ source: e.source, target: e.target, weight: e.prob })),
+      meta: {
+        nodes: nodes.length,
+        edges: filtered.length,
+      }
+    },
+    edges: filtered,
+  }
+}
+
 export default {
   name: 'IdentificationPage',
   components: { GraphView, ErrorModal, TaskHistoryModal },
   setup() {
     const router = useRouter()
     const selectedExistingFile = ref(null)
+
+    // 概率传播（潜在路径预测）
+    const propTaskId = ref('')
+    const propMode = ref('single')
+    const propK = ref(10)
+    const propBeta = ref('')
+    const propNumSimulations = ref(500)
+    const edgeProbThreshold = ref(0.1)
+    const topEdgesLimit = ref(200)
+    const topEdgesPreviewLimit = ref(20)
+
+    const propLoading = ref(false)
+    const propError = ref('')
+    const propInfo = ref('')
+
+    const probabilityGraph = ref(null)
+    const probabilityGraphsBySeed = ref(null)
+    const availableSeeds = ref([])
+    const selectedSeed = ref('')
     const existingFiles = ref([]) // 后端返回的所有文件（本页最多100条）
     const displayedExistingFiles = ref([]) // 当前显示的文件（分页后）
     const existingSearch = ref('')
@@ -344,6 +535,29 @@ export default {
     const visualLoading = ref(false)
     const visualError = ref('')
     const visualData = ref(null)
+
+    // 右侧“识别结果”卡片高度同步：以左侧可视化卡片高度为准
+    const visualCardRef = ref(null)
+    const rightCardHeight = ref(null)
+    let _rightCardRO = null
+
+    const rightCardStyle = computed(() => {
+      const h = Number(rightCardHeight.value)
+      if (!Number.isFinite(h) || h <= 0) return {}
+      return {
+        height: `${h}px`,
+      }
+    })
+
+    const _syncRightCardHeight = async () => {
+      await nextTick()
+      const el = visualCardRef.value
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      if (rect && rect.height) {
+        rightCardHeight.value = Math.round(rect.height)
+      }
+    }
 
     const filteredExistingFiles = computed(() => {
       const kw = (existingSearch.value || '').trim().toLowerCase()
@@ -750,15 +964,57 @@ export default {
       }
     })
 
+    // 当左侧卡片因 v-if 重建时，重新绑定 ResizeObserver
+    watch(
+      [() => tempSelectedFile.value, () => selectedExistingFile.value, () => visualData.value],
+      async () => {
+        await _bindRightCardObserver()
+      },
+      { deep: true }
+    )
+
+    const _bindRightCardObserver = async () => {
+      await nextTick()
+      try {
+        if (_rightCardRO) {
+          _rightCardRO.disconnect()
+        }
+      } catch (e) {
+        // ignore
+      }
+      _rightCardRO = null
+
+      await _syncRightCardHeight()
+
+      try {
+        const el = visualCardRef.value
+        if (el && typeof ResizeObserver !== 'undefined') {
+          _rightCardRO = new ResizeObserver(() => {
+            _syncRightCardHeight()
+          })
+          _rightCardRO.observe(el)
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
     onMounted(async () => {
       // 加载算法列表
       fetchAlgorithms()
+      await _bindRightCardObserver()
     })
 
     onBeforeUnmount(() => {
       detachInfiniteScroll()
       // 组件卸载时停止轮询，避免内存泄漏
       stopPolling()
+      try {
+        if (_rightCardRO) _rightCardRO.disconnect()
+      } catch (e) {
+        // ignore
+      }
+      _rightCardRO = null
     })
 
     // 选择临时文件并关闭弹窗
@@ -952,18 +1208,52 @@ export default {
         // 3) 获取结果
         statusMessage.value = '获取结果中...'
         const resultRes = await identificationService.getResult(taskId)
-        const map = resultRes?.data?.result || {}
-        resultsMap.value = map
 
-        // 将 map 转为表格数据
-        const rows = Object.entries(map).map(([nodeId, nodeValue]) => ({
-          input: String(nodeId),
-          output: nodeValue
-        }))
+        // 兼容不同返回结构：
+        // 1) { result: {...} }
+        // 2) { data: { result: {...} } }
+        // 3) { data: { data: { result: {...} } } }
+        // 4) { result: [ { input, output } ] } 或 { result: [ [k,v], ... ] }
+        const raw = resultRes?.data
+        const rawResult = raw?.result ?? raw?.data?.result ?? raw?.data?.data?.result ?? {}
+
+        let map = null
+        let rows = []
+
+        if (Array.isArray(rawResult)) {
+          // 若后端直接返回数组形式
+          rows = rawResult
+            .map((item) => {
+              if (Array.isArray(item) && item.length >= 2) {
+                return { input: String(item[0]), output: item[1] }
+              }
+              const input = item?.input ?? item?.node_id ?? item?.nodeId ?? item?.id
+              const output = item?.output ?? item?.value ?? item?.score
+              if (input == null) return null
+              return { input: String(input), output }
+            })
+            .filter(Boolean)
+
+          map = Object.fromEntries(rows.map(r => [String(r.input), r.output]))
+        } else {
+          // 默认按 map 处理
+          map = rawResult && typeof rawResult === 'object' ? rawResult : {}
+          rows = Object.entries(map).map(([nodeId, nodeValue]) => ({
+            input: String(nodeId),
+            output: nodeValue
+          }))
+        }
+
+        resultsMap.value = map
         results.value = rows
 
         statusMessage.value = '识别完成'
         progress.value = 100
+
+        // 概率传播默认 task_id：识别成功后自动填充
+        if (!propTaskId.value) {
+          propTaskId.value = String(taskId)
+        }
 
       } catch (error) {
         console.error('识别失败:', error)
@@ -1039,6 +1329,122 @@ export default {
       showAlgoTooltip.value = false
     }
 
+    const startPropagation = async () => {
+      propLoading.value = true
+      propError.value = ''
+      propInfo.value = ''
+      probabilityGraph.value = null
+      probabilityGraphsBySeed.value = null
+      availableSeeds.value = []
+      selectedSeed.value = ''
+
+      try {
+        const taskId = String(propTaskId.value || currentTaskId.value || '').trim()
+        if (!taskId) {
+          throw new Error('请先执行一次识别，或手动输入有效的 task_id')
+        }
+
+        propInfo.value = '正在请求后端进行传播计算...'
+        const res = await identificationService.propagation({
+          task_id: taskId,
+          mode: propMode.value,
+          k: propK.value,
+          beta: propBeta.value,
+          num_simulations: propNumSimulations.value,
+        })
+
+        const payload = res?.data
+        if (!payload || typeof payload !== 'object') {
+          throw new Error('后端返回的传播结果数据无效')
+        }
+
+        propInfo.value = '计算完成，正在处理和渲染图数据...'
+
+        if (propMode.value === 'multi') {
+          const pg = payload?.probability_graph
+          if (!pg || typeof pg !== 'object') {
+            throw new Error('后端未返回 probability_graph（multi 模式）')
+          }
+          probabilityGraph.value = buildGraphFromPropagation(pg, {
+            edgeProbThreshold: edgeProbThreshold.value,
+            topEdgesLimit: topEdgesLimit.value,
+          })
+        } else {
+          const rawGraphs = payload?.probability_graphs
+          if (!rawGraphs || typeof rawGraphs !== 'object') {
+            throw new Error('后端未返回 probability_graphs（single 模式）')
+          }
+
+          const graphs = {}
+          const seeds = Object.keys(rawGraphs)
+          if (seeds.length === 0) {
+            propInfo.value = '后端返回了空的单源结果集，没有可供选择的 seed。'
+          } else {
+            propInfo.value = ''
+          }
+
+          for (const seed of seeds) {
+            graphs[seed] = buildGraphFromPropagation(rawGraphs[seed], {
+              edgeProbThreshold: edgeProbThreshold.value,
+              topEdgesLimit: topEdgesLimit.value,
+            })
+          }
+          probabilityGraphsBySeed.value = graphs
+          availableSeeds.value = seeds
+          if (seeds.length > 0) {
+            selectedSeed.value = seeds[0]
+          }
+        }
+      } catch (e) {
+        propError.value = e.message || '潜在路径预测失败'
+      } finally {
+        propLoading.value = false
+        if (!propError.value) {
+          propInfo.value = ''
+        }
+      }
+    }
+
+    const clearPropagation = () => {
+      propError.value = ''
+      propInfo.value = ''
+      probabilityGraph.value = null
+      probabilityGraphsBySeed.value = null
+      availableSeeds.value = []
+      selectedSeed.value = ''
+    }
+
+    const propEdges = computed(() => {
+      if (propMode.value === 'multi') {
+        return probabilityGraph.value?.edges || []
+      }
+      if (propMode.value === 'single' && selectedSeed.value) {
+        return probabilityGraphsBySeed.value?.[selectedSeed.value]?.edges || []
+      }
+      return []
+    })
+
+    const filteredEdgesCount = computed(() => propEdges.value.length)
+
+    const topEdgesPreview = computed(() => {
+      return propEdges.value
+        .slice(0, topEdgesPreviewLimit.value)
+        .map(e => ({
+          ...e,
+          probLabel: (e.prob * 100).toFixed(2) + '%',
+        }))
+    })
+
+    const propGraphForView = computed(() => {
+      if (propMode.value === 'multi') {
+        return probabilityGraph.value?.graph
+      }
+      if (propMode.value === 'single' && selectedSeed.value) {
+        return probabilityGraphsBySeed.value?.[selectedSeed.value]?.graph
+      }
+      return null
+    })
+
     return {
       selectedExistingFile,
       existingFiles,
@@ -1073,6 +1479,8 @@ export default {
       confirmTempFile,
       visualizeNetwork,
       clearVisualization,
+      visualCardRef,
+      rightCardStyle,
       getFileNameWithoutExt,
       getFileExtension,
       formatFileSize,
@@ -1116,7 +1524,26 @@ export default {
       onHistorySetUserFilter,
       topKHighlightMap,
       nonTopKGray,
-      toggleNonTopKGray
+      toggleNonTopKGray,
+      // 概率传播相关
+      propTaskId,
+      propMode,
+      propK,
+      propBeta,
+      propNumSimulations,
+      edgeProbThreshold,
+      topEdgesLimit,
+      topEdgesPreviewLimit,
+      propLoading,
+      propError,
+      propInfo,
+      availableSeeds,
+      selectedSeed,
+      propGraphForView,
+      topEdgesPreview,
+      filteredEdgesCount,
+      startPropagation,
+      clearPropagation
     }
   }
 }
@@ -1182,6 +1609,70 @@ export default {
   grid-template-columns: 1fr 1fr;
   gap: 20px;
   align-items: start;
+}
+
+
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  align-items: start;
+}
+
+.prop-results {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.sub-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 10px 0;
+}
+
+.edges-meta {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 10px;
+}
+
+@media (max-width: 900px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* 让识别结果卡片内部可滚动（内容过长不撑开卡片） */
+.identification-results-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.identification-results-card > .progress-section,
+.identification-results-card > .results-section,
+.identification-results-card > .empty-state {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 让识别结果卡片内部可滚动（内容过长不撑开卡片） */
+.results-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.table-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
 }
 
 .card {
@@ -1585,6 +2076,9 @@ input[type="range"] {
 }
 
 .table-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   overflow-x: auto;
   margin-bottom: 16px;
 }
@@ -1972,6 +2466,12 @@ input[type="range"] {
   z-index: 20;
   white-space: pre-wrap;
 }
+
+.left-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 20px; /* 控制两个卡片之间的垂直间距 */
+    }
 
 @media (max-width: 1200px) {
   .content-wrapper {

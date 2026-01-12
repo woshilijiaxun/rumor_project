@@ -75,6 +75,35 @@ export const identificationService = {
     return data
   },
 
+  async propagation({ task_id, mode = 'single', k = 10, beta = undefined, num_simulations = 500 } = {}) {
+    if (!task_id) {
+      throw new Error('缺少参数: task_id')
+    }
+
+    const body = {
+      task_id,
+      mode,
+      k,
+      num_simulations,
+    }
+
+    if (beta !== undefined && beta !== null && beta !== '') {
+      body.beta = beta
+    }
+
+    const response = await fetch(`${API_BASE_URL}/propagation`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(body)
+    })
+
+    const data = await response.json().catch(() => null)
+    if (!response.ok || data?.status !== 'success') {
+      throw new Error(data?.message || `传播预测失败 (HTTP ${response.status})`)
+    }
+    return data
+  },
+
   async cancelTask(taskId) {
     const response = await fetch(`${API_BASE_URL}/tasks/${encodeURIComponent(taskId)}/cancel`, {
       method: 'POST',
