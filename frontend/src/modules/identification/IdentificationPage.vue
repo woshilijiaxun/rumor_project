@@ -153,62 +153,71 @@
           </div>
           <!-- 潜在路径预测（概率传播图） -->
       <div class="propagation-row">
-        <div class="card">
-          <h2>潜在路径预测</h2>
+        <div class="card propagation-card">
+          <div class="prop-header">
+            <h2>潜在路径预测</h2>
 
-          <div class="form-grid">
-            <div class="form-group">
-              <label>任务来源（task_id）</label>
-              <input v-model.trim="propTaskId" class="form-control" type="text" placeholder="默认自动使用当前识别任务" />
-            </div>
-
-            <div class="form-group">
-              <label>模式</label>
-              <select v-model="propMode" class="form-control">
-                <option value="single">single（单源逐个）</option>
-                <option value="multi">multi（多源联合）</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label>Top-K（k）</label>
-              <input v-model.number="propK" class="form-control" type="number" min="1" step="1" />
-            </div>
-
-            <div class="form-group">
-              <label>beta（可为空）</label>
-              <input v-model.trim="propBeta" class="form-control" type="text" placeholder="为空则后端自动使用阈值" />
-            </div>
-
-            <div class="form-group">
-              <label>仿真次数（num_simulations）</label>
-              <select v-model.number="propNumSimulations" class="form-control">
-                <option :value="200">200</option>
-                <option :value="500">500</option>
-                <option :value="1000">1000</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label>边阈值（前端过滤）</label>
-              <input v-model.number="edgeProbThreshold" class="form-control" type="number" min="0" max="1" step="0.01" />
-            </div>
-
-            <div class="form-group">
-              <label>Top 边数（性能保护）</label>
-              <input v-model.number="topEdgesLimit" class="form-control" type="number" min="1" step="1" />
-            </div>
-
-            <div class="form-group" v-if="propMode === 'single'">
-              <label>Seed 选择</label>
-              <select v-model="selectedSeed" class="form-control" :disabled="!availableSeeds.length">
-                <option value="">-- 请选择 seed --</option>
-                <option v-for="s in availableSeeds" :key="s" :value="s">{{ s }}</option>
-              </select>
-            </div>
           </div>
 
-          <div class="action-buttons">
+          <div class="prop-section">
+            <div class="prop-section-title">参数配置</div>
+            <div class="form-grid prop-form-grid">
+              <div class="prop-form-item">
+                <div class="prop-form-label">传播模式</div>
+                <div class="prop-form-control">
+                  <select v-model="propMode" class="form-control">
+                    <option value="single">单节点传播</option>
+                    <option value="multi">多节点传播</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="prop-form-item">
+                <div class="prop-form-label">Top-K节点数量</div>
+                <div class="prop-form-control">
+                  <input v-model.number="propK" class="form-control" type="number" min="1" step="1" />
+                </div>
+              </div>
+
+              <div class="prop-form-item">
+                <div class="prop-form-label">传播概率</div>
+                <div class="prop-form-control">
+                  <input v-model.trim="propBeta" class="form-control" type="text" placeholder="为空则后端自动使用阈值" />
+                </div>
+              </div>
+
+              <div class="prop-form-item">
+                <div class="prop-form-label">仿真次数</div>
+                <div class="prop-form-control">
+                  <select v-model.number="propNumSimulations" class="form-control">
+                    <option :value="200">200</option>
+                    <option :value="500">500</option>
+                    <option :value="1000">1000</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="prop-form-item">
+                <div class="prop-form-label">边阈值</div>
+                <div class="prop-form-control">
+                  <input v-model.number="edgeProbThreshold" class="form-control" type="number" min="0" max="1" step="0.01" />
+                </div>
+              </div>
+
+              <div class="prop-form-item" v-if="propMode === 'single'">
+                <div class="prop-form-label">节点选择</div>
+                <div class="prop-form-control">
+                  <select v-model="selectedSeed" class="form-control" :disabled="!availableSeeds.length">
+                    <option value="">-- 请选择节点--</option>
+                    <option v-for="s in availableSeeds" :key="s" :value="s">{{ s }}</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="prop-actions action-buttons">
             <button class="btn btn-primary" type="button" :disabled="propLoading" @click="startPropagation">
               {{ propLoading ? '预测中...' : '开始预测' }}
             </button>
@@ -225,27 +234,38 @@
           </div>
 
           <div v-if="propGraphForView" class="prop-results">
-            <div class="prop-graph">
-              <GraphView :graph="propGraphForView" height="420px" />
+            <div class="prop-section">
+              <div class="prop-section-title">传播路径可视化</div>
+              <div class="prop-graph">
+                <GraphView :graph="propGraphForView" height="420px" />
+              </div>
             </div>
 
-            <div class="prop-edges">
-              <h3 class="sub-title">Top 边（按概率降序）</h3>
-              <div class="edges-meta">共 {{ filteredEdgesCount }} 条边（阈值过滤后），展示前 {{ topEdgesPreviewLimit }} 条</div>
+            <div class="prop-section">
+              <div class="prop-section-header">
+                <h3 class="prop-section-title">Top 边列表</h3>
+                <div class="edges-meta">共 {{ filteredEdgesCount }} 条边（阈值过滤后），展示前 {{ topEdgesPreviewLimit }} 条</div>
+              </div>
               <div class="edges-list">
-                <table class="results-table">
+                <table class="prop-edges-table">
                   <thead>
                     <tr>
-                      <th>序号</th>
+                      <th style="width: 60px">#</th>
                       <th>边</th>
-                      <th>概率</th>
+                      <th style="width: 100px">概率</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="(e, idx) in topEdgesPreview" :key="idx">
-                      <td>{{ idx + 1 }}</td>
-                      <td class="data-cell">{{ e.source }} → {{ e.target }}</td>
-                      <td class="result-cell">{{ e.probLabel }}</td>
+                    <tr v-for="(e, idx) in topEdgesPreview" :key="idx" :class="{ 'highlight-row': idx % 2 === 0 }">
+                      <td class="text-center">{{ idx + 1 }}</td>
+                      <td class="data-cell">
+                        <span class="edge-source">{{ e.source }}</span>
+                        <span class="edge-arrow">→</span>
+                        <span class="edge-target">{{ e.target }}</span>
+                      </td>
+                      <td class="text-center">
+                        <span class="prob-badge">{{ e.probLabel }}</span>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -503,7 +523,7 @@ export default {
 
     // 概率传播（潜在路径预测）
     const propTaskId = ref('')
-    const propMode = ref('single')
+    const propMode = ref('multi')
     const propK = ref(10)
     const propBeta = ref('')
     const propNumSimulations = ref(500)
@@ -1620,11 +1640,203 @@ export default {
   align-items: start;
 }
 
+/* 潜在路径预测卡片专属布局/样式 */
+.propagation-card {
+  padding-top: 16px;
+}
+
+.prop-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 12px 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+/* 覆盖通用 .card h2 的下划线，避免双分隔线 */
+.propagation-card .prop-header h2 {
+  margin: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.prop-header-hint {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.prop-section {
+  background: #f9fafb;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.prop-section + .prop-section {
+  margin-top: 12px;
+}
+
+.prop-section-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.prop-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  margin: 0 0 8px 0;
+}
+
+.prop-section-header .prop-section-title {
+  margin: 0;
+}
+
+.prop-form-grid {
+  gap: 10px 14px;
+}
+
+.prop-form-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.prop-form-item:hover {
+  background: rgba(22, 119, 255, 0.04);
+}
+
+.prop-form-label {
+  flex: 0 0 96px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4b5563;
+  line-height: 1.2;
+}
+
+.prop-form-control {
+  flex: 1;
+  min-width: 0;
+}
+
+.prop-form-grid .form-control {
+  height: 36px;
+  line-height: 22px;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+.prop-form-grid select.form-control {
+  padding-right: 28px;
+}
+
+.prop-form-grid textarea.form-control {
+  height: auto;
+  line-height: 1.4;
+}
+
+.prop-form-grid .form-control::placeholder {
+  color: #9ca3af;
+  opacity: 1;
+}
+
+.prop-actions {
+  margin-top: 14px;
+}
+
 .prop-results {
   margin-top: 12px;
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: 1.2fr 1fr;
   gap: 16px;
+  align-items: start;
+}
+
+.prop-graph {
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+}
+
+.edges-list {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.prop-edges-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.prop-edges-table thead {
+  background: #f3f4f6;
+}
+
+.prop-edges-table th {
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.prop-edges-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f3f4f6;
+  color: #4b5563;
+}
+
+.prop-edges-table tbody tr:hover {
+  background: #f9fafb;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.edge-source,
+.edge-target {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.edge-arrow {
+  margin: 0 8px;
+  color: #9ca3af;
+}
+
+.prob-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0d5ccc;
+  background: #eaf2ff;
+  border: 1px solid #cfe2ff;
+}
+
+.edges-meta {
+  font-size: 12px;
+  color: #6b7280;
+  margin: 0;
 }
 
 .sub-title {
@@ -1643,6 +1855,27 @@ export default {
 @media (max-width: 900px) {
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .prop-results {
+    grid-template-columns: 1fr;
+  }
+
+  .prop-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .prop-form-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 6px 0;
+  }
+
+  .prop-form-label {
+    flex: 0 0 auto;
+    width: 100%;
   }
 }
 
