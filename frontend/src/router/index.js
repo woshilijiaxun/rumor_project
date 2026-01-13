@@ -10,6 +10,7 @@ import SettingsPage from '../modules/settings/SettingsPage.vue'
 import AdminSettingsPage from '../modules/admin/AdminSettingsPage.vue'
 import IdentificationPage from '../modules/identification/IdentificationPage.vue'
 import IdentificationHistoryDetailPage from '../modules/identification/IdentificationHistoryDetailPage.vue'
+import IdentificationReportPage from '../modules/identification/IdentificationReportPage.vue'
 
 const routes = [
   { path: '/', redirect: '/login' },
@@ -26,6 +27,7 @@ const routes = [
       { path: 'files', component: FilesPage },
       { path: 'identification', component: IdentificationPage },
       { path: 'identification/history/:taskId', component: IdentificationHistoryDetailPage },
+      { path: 'identification/report/:taskId', component: IdentificationReportPage },
       { path: 'settings', component: SettingsPage },
       { path: 'admin-settings', component: AdminSettingsPage, meta: { requiresAdmin: true } },
       { path: 'home', redirect: '/dashboard' },

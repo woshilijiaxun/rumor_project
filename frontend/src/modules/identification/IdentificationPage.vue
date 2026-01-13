@@ -151,186 +151,6 @@
               <p class="hint">选择文件后，点击"可视化网络"按钮</p>
             </div>
           </div>
-          <!-- 潜在路径预测（概率传播图） -->
-      <div class="propagation-row">
-        <div class="card propagation-card">
-          <div class="prop-header">
-            <h2>潜在路径预测</h2>
-
-          </div>
-
-          <div class="prop-section">
-            <div class="prop-section-title">参数配置</div>
-            <div class="form-grid prop-form-grid">
-              <div class="prop-form-item">
-                <div class="prop-form-label">传播模式</div>
-                <div class="prop-form-control">
-                  <select v-model="propMode" class="form-control">
-                    <option value="single">单节点传播</option>
-                    <option value="multi">多节点传播</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="prop-form-item">
-                <div class="prop-form-label">Top-K节点数量</div>
-                <div class="prop-form-control">
-                  <input v-model.number="propK" class="form-control" type="number" min="1" step="1" />
-                </div>
-              </div>
-
-              <div class="prop-form-item">
-                <div class="prop-form-label">传播概率</div>
-                <div class="prop-form-control">
-                  <input v-model.trim="propBeta" class="form-control" type="text" placeholder="为空则后端自动使用阈值" />
-                </div>
-              </div>
-
-              <div class="prop-form-item">
-                <div class="prop-form-label">仿真次数</div>
-                <div class="prop-form-control">
-                  <select v-model.number="propNumSimulations" class="form-control">
-                    <option :value="200">200</option>
-                    <option :value="500">500</option>
-                    <option :value="1000">1000</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="prop-form-item">
-                <div class="prop-form-label">边阈值</div>
-                <div class="prop-form-control">
-                  <input v-model.number="edgeProbThreshold" class="form-control" type="number" min="0" max="1" step="0.01" />
-                </div>
-              </div>
-
-              <div class="prop-form-item" v-if="propMode === 'single'">
-                <div class="prop-form-label">节点选择</div>
-                <div class="prop-form-control">
-                  <select v-model="selectedSeed" class="form-control" :disabled="!availableSeeds.length">
-                    <option value="">-- 请选择节点--</option>
-                    <option v-for="s in availableSeeds" :key="s" :value="s">{{ s }}</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-          </div>
-
-          <div class="prop-actions action-buttons">
-            <button class="btn btn-primary" type="button" :disabled="propLoading" @click="startPropagation">
-              {{ propLoading ? '预测中...' : '开始预测' }}
-            </button>
-            <button class="btn btn-secondary" type="button" :disabled="propLoading" @click="clearPropagation">
-              清空预测结果
-            </button>
-          </div>
-
-          <div v-if="propError" class="error-state">
-            <p>{{ propError }}</p>
-          </div>
-          <div v-else-if="propInfo" class="loading-state">
-            <p>{{ propInfo }}</p>
-          </div>
-
-          <div v-if="propGraphForView" class="prop-results">
-            <div class="prop-section">
-              <div class="prop-section-title">传播路径可视化</div>
-              <div class="prop-graph">
-                <GraphView :graph="propGraphForView" height="420px" />
-              </div>
-            </div>
-
-            <div class="prop-section">
-              <div class="prop-section-header">
-                <h3 class="prop-section-title">Top 边列表</h3>
-                <div class="edges-meta">共 {{ filteredEdgesCount }} 条边（阈值过滤后），展示前 {{ topEdgesPreviewLimit }} 条</div>
-              </div>
-              <div class="edges-list">
-                <table class="prop-edges-table">
-                  <thead>
-                    <tr>
-                      <th style="width: 60px">#</th>
-                      <th>边</th>
-                      <th style="width: 100px">概率</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="(e, idx) in topEdgesPreview" :key="idx" :class="{ 'highlight-row': idx % 2 === 0 }">
-                      <td class="text-center">{{ idx + 1 }}</td>
-                      <td class="data-cell">
-                        <span class="edge-source">{{ e.source }}</span>
-                        <span class="edge-arrow">→</span>
-                        <span class="edge-target">{{ e.target }}</span>
-                      </td>
-                      <td class="text-center">
-                        <span class="prob-badge">{{ e.probLabel }}</span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 文件选择弹出框（独立于布局） -->
-      <div v-if="showFileModal" class="modal-overlay" @click.self="closeFileModal">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>选择文件</h3>
-            <button class="modal-close" @click="closeFileModal">×</button>
-          </div>
-          <div class="modal-body">
-            <div v-if="loadingExistingFiles" class="loading-state">
-              <p>加载文件列表中...</p>
-            </div>
-            <div v-else-if="existingFilesError" class="error-state">
-              <p>{{ existingFilesError }}</p>
-              <button @click="loadExistingFiles" class="retry-btn">重试</button>
-            </div>
-            <template v-else>
-              <div class="existing-filter-bar">
-                <input 
-                  v-model="existingSearch" 
-                  type="text" 
-                  class="existing-search-input" 
-                  placeholder="搜索已有文件名或类型..."
-                />
-              </div>
-              <div v-if="totalExistingFiles === 0" class="empty-state">
-                <p>暂无可用文件</p>
-              </div>
-              <div v-else class="files-list" ref="filesListRef">
-                <div 
-                  v-for="file in displayedExistingFiles" 
-                  :key="file.id"
-                  class="file-item"
-                  :class="{ selected: tempSelectedFile?.id === file.id }"
-                  @click="selectTempFileAndClose(file)"
-                >
-                  <div class="file-info">
-                    <div class="file-name">{{ getFileNameWithoutExt(file.original_name) }}</div>
-                    <div class="file-meta">
-                      <span class="file-type">{{ getFileExtension(file.original_name) }}</span>
-                      <span class="file-size">{{ formatFileSize(file.size_bytes) }}</span>
-                      <span class="file-date">{{ formatDate(file.created_at) }}</span>
-                    </div>
-                  </div>
-                  <div class="file-checkbox">
-                    <input 
-                      type="radio" 
-                      :checked="tempSelectedFile?.id === file.id"
-                      @change="selectTempFileAndClose(file)"
-                    />
-                  </div>
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
-      </div>
         </div>
 
         <div class="right-panel">
@@ -348,6 +168,15 @@
 
             <!-- 结果表格 -->
             <div v-else-if="results.length > 0" class="results-section">
+              <div class="report-section">
+                <div class="report-header">
+                  <h3 class="sub-title">智能报告分析</h3>
+                  <button class="btn btn-secondary report-entry-btn" type="button" @click="goToReportPage">
+                    查看报告
+                  </button>
+                </div>
+                <div class="report-entry-hint">点击“查看报告”跳转到智能报告页面</div>
+              </div>
               <div class="results-summary" :class="{ 'is-single': networkNodeCount > 0 && networkNodeCount < 10 }">
                 <div class="summary-item">
                   <span class="label">网络总节点数:</span>
@@ -415,7 +244,188 @@
         </div>
       </div>
 
-      
+      <!-- 潜在路径预测（全宽区域） -->
+      <div class="propagation-full-row">
+        <div class="propagation-full-inner">
+        <div class="card propagation-card">
+          <div class="prop-header">
+            <h2>潜在路径预测</h2>
+          </div>
+
+          <div class="prop-section">
+            <div class="prop-section-title">参数配置</div>
+            <div class="form-grid prop-form-grid">
+              <div class="prop-form-item">
+                <div class="prop-form-label">传播模式</div>
+                <div class="prop-form-control">
+                  <select v-model="propMode" class="form-control">
+                    <option value="single">单节点传播</option>
+                    <option value="multi">多节点传播</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="prop-form-item">
+                <div class="prop-form-label">Top-K节点数量</div>
+                <div class="prop-form-control">
+                  <input v-model.number="propK" class="form-control" type="number" min="1" step="1" />
+                </div>
+              </div>
+
+              <div class="prop-form-item">
+                <div class="prop-form-label">传播概率</div>
+                <div class="prop-form-control">
+                  <input v-model.trim="propBeta" class="form-control" type="text" placeholder="为空则后端自动使用阈值" />
+                </div>
+              </div>
+
+              <div class="prop-form-item">
+                <div class="prop-form-label">仿真次数</div>
+                <div class="prop-form-control">
+                  <select v-model.number="propNumSimulations" class="form-control">
+                    <option :value="200">200</option>
+                    <option :value="500">500</option>
+                    <option :value="1000">1000</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="prop-form-item">
+                <div class="prop-form-label">时间步数</div>
+                <div class="prop-form-control">
+                  <input v-model.number="propMaxSteps" class="form-control" type="number" min="1" max="20" step="1" />
+                </div>
+              </div>
+
+              <div class="prop-form-item">
+                <div class="prop-form-label">边阈值</div>
+                <div class="prop-form-control">
+                  <input v-model.number="edgeProbThreshold" class="form-control" type="number" min="0" max="1" step="0.01" />
+                </div>
+              </div>
+
+              <div class="prop-form-item">
+                <div class="prop-form-label">边展示方式</div>
+                <div class="prop-form-control">
+                  <select v-model="edgeDisplayMode" class="form-control">
+                    <option value="cumulative">累积显示（0..t）</option>
+                    <option value="current">仅当前步（t）</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="prop-form-item">
+                <div class="prop-form-label">每步边上限</div>
+                <div class="prop-form-control">
+                  <input v-model.number="stepEdgeLimit" class="form-control" type="number" min="1" max="2000" step="1" />
+                </div>
+              </div>
+
+              <div class="prop-form-item" v-if="propMode === 'single'">
+                <div class="prop-form-label">节点选择</div>
+                <div class="prop-form-control">
+                  <select v-model="selectedSeed" class="form-control" :disabled="!availableSeeds.length">
+                    <option value="">-- 请选择节点--</option>
+                    <option v-for="s in availableSeeds" :key="s" :value="s">{{ s }}</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="prop-actions action-buttons">
+            <button class="btn btn-primary" type="button" :disabled="propLoading" @click="startPropagation">
+              {{ propLoading ? '预测中...' : '开始预测' }}
+            </button>
+            <button class="btn btn-secondary" type="button" :disabled="propLoading" @click="clearPropagation">
+              清空预测结果
+            </button>
+          </div>
+
+          <div v-if="propError" class="error-state">
+            <p>{{ propError }}</p>
+          </div>
+          <div v-else-if="propInfo" class="loading-state">
+            <p>{{ propInfo }}</p>
+          </div>
+
+          <div v-if="propGraphForView" class="prop-results">
+            <div class="prop-section prop-section-wide">
+              <div class="prop-section-header">
+                <h3 class="prop-section-title">传播路径可视化（t=0..3 平铺）</h3>
+                <div class="edges-meta" v-if="stepMaxT > 0">当前高亮：t={{ currentStep }} / {{ stepMaxT }}</div>
+              </div>
+
+              <div class="step-controls" v-if="stepMaxT > 0">
+                <div class="step-row">
+                  <button class="btn btn-secondary" type="button" :disabled="propLoading || currentStep <= 0" @click="prevStep">上一步</button>
+                  <button class="btn btn-secondary" type="button" :disabled="propLoading" @click="togglePlay">{{ isPlaying ? '暂停' : '播放' }}</button>
+                  <button class="btn btn-secondary" type="button" :disabled="propLoading || currentStep >= stepMaxT" @click="nextStep">下一步</button>
+                  <button class="btn btn-secondary" type="button" :disabled="propLoading" @click="resetStep">复位</button>
+                </div>
+                <input class="step-slider" type="range" min="0" :max="stepMaxT" step="1" v-model.number="currentStep" />
+              </div>
+
+              <div class="prop-graph-grid" v-if="propStepCards.length">
+                <div
+                  v-for="card in propStepCards"
+                  :key="card.t"
+                  class="prop-step-card"
+                  :class="{ active: card.t === currentStep }"
+                  @click="currentStep = card.t"
+                >
+                  <div class="prop-step-title">t={{ card.t }}</div>
+                  <div class="prop-step-graph">
+                    <PropagationGraphView
+                      :graph="card.graph"
+                      :highlight-map="card.highlightMap"
+                      :roots="card.roots"
+                      height="360px"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="prop-graph" v-else>
+                <PropagationGraphView :graph="propGraphForView" :highlight-map="propHighlightMap" :roots="propRoots" height="420px" />
+              </div>
+            </div>
+
+            <div class="prop-section">
+              <div class="prop-section-header">
+                <h3 class="prop-section-title">Top 边列表</h3>
+                <div class="edges-meta">共 {{ filteredEdgesCount }} 条边（阈值过滤后），展示前 {{ topEdgesPreviewLimit }} 条</div>
+              </div>
+              <div class="edges-list">
+                <table class="prop-edges-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 60px">#</th>
+                      <th>边</th>
+                      <th style="width: 100px">概率</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(e, idx) in topEdgesPreview" :key="idx" :class="{ 'highlight-row': idx % 2 === 0 }">
+                      <td class="text-center">{{ idx + 1 }}</td>
+                      <td class="data-cell">
+                        <span class="edge-source">{{ e.source }}</span>
+                        <span class="edge-arrow">→</span>
+                        <span class="edge-target">{{ e.target }}</span>
+                      </td>
+                      <td class="text-center">
+                        <span class="prob-badge">{{ e.probLabel }}</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      </div>
     </div>
     <TaskHistoryModal
       v-if="showHistoryModal"
@@ -438,14 +448,15 @@
 
 <script>
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-
-import { useRouter } from 'vue-router'
 import axios from 'axios'
 import GraphView from './components/GraphView.vue'
+import PropagationGraphView from './components/PropagationGraphView.vue'
 import ErrorModal from './components/ErrorModal.vue'
 import TaskHistoryModal from './components/TaskHistoryModal.vue'
+
 import { identificationService } from './services/identificationService'
 import { settingsStore } from '../settings/settingsStore'
+import { useRouter } from 'vue-router'
 
 const buildGraphFromPropagation = (payload, { edgeProbThreshold = 0, topEdgesLimit = 200 } = {}) => {
   const rawEdges = Array.isArray(payload?.edges) ? payload.edges : (Array.isArray(payload?.links) ? payload.links : [])
@@ -516,9 +527,18 @@ const buildGraphFromPropagation = (payload, { edgeProbThreshold = 0, topEdgesLim
 
 export default {
   name: 'IdentificationPage',
-  components: { GraphView, ErrorModal, TaskHistoryModal },
+  components: { GraphView, PropagationGraphView, ErrorModal, TaskHistoryModal },
   setup() {
     const router = useRouter()
+
+    const goToReportPage = () => {
+      const taskId = String(currentTaskId.value || '').trim()
+      if (!taskId) {
+        alert('请先完成一次识别任务，再查看智能报告')
+        return
+      }
+      router.push(`/identification/report/${encodeURIComponent(taskId)}`)
+    }
     const selectedExistingFile = ref(null)
 
     // 概率传播（潜在路径预测）
@@ -527,9 +547,20 @@ export default {
     const propK = ref(10)
     const propBeta = ref('')
     const propNumSimulations = ref(500)
+    const propMaxSteps = ref(4)
     const edgeProbThreshold = ref(0.1)
     const topEdgesLimit = ref(200)
     const topEdgesPreviewLimit = ref(20)
+
+    // 时间步展示控制
+    const edgeDisplayMode = ref('cumulative') // cumulative | current
+    const stepEdgeLimit = ref(120)
+
+    // 时间步展示（B方案：后端返回 steps）
+    const currentStep = ref(0)
+    const stepsPayload = ref(null)
+    let _stepPlayTimer = null
+    const isPlaying = ref(false)
 
     const propLoading = ref(false)
     const propError = ref('')
@@ -646,6 +677,10 @@ export default {
     const statusMessage = ref('')
     const results = ref([])
     const resultsMap = ref(null) // 原始 map：{ node_id: node_value }
+
+    const reportLoading = ref(false)
+    const reportError = ref('')
+    const report = ref(null)
 
     // Top-K 展示
     const _prefs = settingsStore.load()
@@ -1029,6 +1064,7 @@ export default {
       detachInfiniteScroll()
       // 组件卸载时停止轮询，避免内存泄漏
       stopPolling()
+      _stopStepPlay()
       try {
         if (_rightCardRO) _rightCardRO.disconnect()
       } catch (e) {
@@ -1192,6 +1228,22 @@ export default {
       })
     }
 
+    const loadReport = async (taskId, { top_n = 20, max_edges = 200000 } = {}) => {
+      const tid = String(taskId || '').trim()
+      if (!tid) return
+      reportLoading.value = true
+      reportError.value = ''
+      report.value = null
+      try {
+        const res = await identificationService.getReport(tid, { top_n, max_edges })
+        report.value = res?.data?.report || null
+      } catch (e) {
+        reportError.value = e?.message || '加载报告失败'
+      } finally {
+        reportLoading.value = false
+      }
+    }
+
     const startIdentification = async () => {
       if (!selectedExistingFile.value || !selectedAlgorithm.value) {
         alert('请选择文件和算法')
@@ -1206,6 +1258,8 @@ export default {
       statusMessage.value = '任务创建中...'
       results.value = []
       resultsMap.value = null
+      report.value = null
+      reportError.value = ''
       currentTaskId.value = ''
 
       try {
@@ -1269,6 +1323,9 @@ export default {
 
         statusMessage.value = '识别完成'
         progress.value = 100
+
+        // 4) 获取智能报告（模板化 sections）
+        await loadReport(taskId, { top_n: 20, max_edges: 200000 })
 
         // 概率传播默认 task_id：识别成功后自动填充
         if (!propTaskId.value) {
@@ -1371,6 +1428,8 @@ export default {
           k: propK.value,
           beta: propBeta.value,
           num_simulations: propNumSimulations.value,
+          max_steps: propMaxSteps.value,
+          return_steps: true,
         })
 
         const payload = res?.data
@@ -1379,6 +1438,12 @@ export default {
         }
 
         propInfo.value = '计算完成，正在处理和渲染图数据...'
+
+        // B方案：后端返回 steps（按时间步）
+        // multi: payload.steps
+        // single: payload.steps_by_seed[seed]
+        stepsPayload.value = null
+        currentStep.value = 0
 
         if (propMode.value === 'multi') {
           const pg = payload?.probability_graph
@@ -1389,6 +1454,10 @@ export default {
             edgeProbThreshold: edgeProbThreshold.value,
             topEdgesLimit: topEdgesLimit.value,
           })
+
+          if (payload?.steps && typeof payload.steps === 'object') {
+            stepsPayload.value = payload.steps
+          }
         } else {
           const rawGraphs = payload?.probability_graphs
           if (!rawGraphs || typeof rawGraphs !== 'object') {
@@ -1414,6 +1483,11 @@ export default {
           if (seeds.length > 0) {
             selectedSeed.value = seeds[0]
           }
+
+          const sb = payload?.steps_by_seed
+          if (sb && typeof sb === 'object') {
+            stepsPayload.value = sb
+          }
         }
       } catch (e) {
         propError.value = e.message || '潜在路径预测失败'
@@ -1432,6 +1506,9 @@ export default {
       probabilityGraphsBySeed.value = null
       availableSeeds.value = []
       selectedSeed.value = ''
+      stepsPayload.value = null
+      currentStep.value = 0
+      _stopStepPlay()
     }
 
     const propEdges = computed(() => {
@@ -1455,7 +1532,128 @@ export default {
         }))
     })
 
+    const _stopStepPlay = () => {
+      if (_stepPlayTimer) {
+        clearInterval(_stepPlayTimer)
+        _stepPlayTimer = null
+      }
+      isPlaying.value = false
+    }
+
+    const _startStepPlay = () => {
+      _stopStepPlay()
+      isPlaying.value = true
+      _stepPlayTimer = setInterval(() => {
+        if (currentStep.value >= stepMaxT.value) {
+          _stopStepPlay()
+          return
+        }
+        currentStep.value = Math.min(stepMaxT.value, currentStep.value + 1)
+      }, 900)
+    }
+
+    const togglePlay = () => {
+      if (isPlaying.value) {
+        _stopStepPlay()
+      } else {
+        _startStepPlay()
+      }
+    }
+
+    const prevStep = () => {
+      _stopStepPlay()
+      currentStep.value = Math.max(0, currentStep.value - 1)
+    }
+
+    const nextStep = () => {
+      _stopStepPlay()
+      currentStep.value = Math.min(stepMaxT.value, currentStep.value + 1)
+    }
+
+    const resetStep = () => {
+      _stopStepPlay()
+      currentStep.value = 0
+    }
+
+    const _normalizeStepObj = (obj) => {
+      const steps = Array.isArray(obj?.steps) ? obj.steps : []
+      return {
+        steps,
+      }
+    }
+
+    const _getStepsObjForCurrent = computed(() => {
+      if (!stepsPayload.value) return null
+      if (propMode.value === 'multi') {
+        return _normalizeStepObj(stepsPayload.value)
+      }
+      if (propMode.value === 'single' && selectedSeed.value) {
+        const sb = stepsPayload.value
+        if (sb && typeof sb === 'object') {
+          return _normalizeStepObj(sb[selectedSeed.value])
+        }
+      }
+      return null
+    })
+
+    const stepMaxT = computed(() => {
+      const steps = _getStepsObjForCurrent.value?.steps || []
+      if (!steps.length) return 0
+      return Math.max(0, steps.length - 1)
+    })
+
+    watch([() => propMode.value, () => selectedSeed.value], () => {
+      _stopStepPlay()
+      currentStep.value = 0
+    })
+
     const propGraphForView = computed(() => {
+      const steps = _getStepsObjForCurrent.value?.steps
+      if (steps && steps.length) {
+        const t = Math.max(0, Math.min(Number(currentStep.value) || 0, stepMaxT.value))
+        const nodes = new Set()
+        const edges = []
+
+        // 累积展示：0..t
+        const stepLimit = Math.max(1, Number(stepEdgeLimit.value) || 120)
+
+        for (let i = 0; i <= t; i++) {
+          const si = steps[i] || {}
+          const ns = Array.isArray(si.nodes) ? si.nodes : []
+          ns.forEach(n => nodes.add(String(n)))
+
+          // 边：可选择“累积”或“仅当前步”
+          if (edgeDisplayMode.value === 'current' && i !== t) continue
+
+          const es = Array.isArray(si.edges) ? si.edges : []
+          es
+            .filter(e => {
+              const p = Number(e?.prob)
+              return Number.isFinite(p) ? p >= Number(edgeProbThreshold.value || 0) : false
+            })
+            .sort((a, b) => (Number(b?.prob) || 0) - (Number(a?.prob) || 0))
+            .slice(0, stepLimit)
+            .forEach(e => {
+              const s = e?.source
+              const tt = e?.target
+              const p = e?.prob
+              if (s == null || tt == null) return
+              edges.push({ source: String(s), target: String(tt), weight: p })
+              nodes.add(String(s))
+              nodes.add(String(tt))
+            })
+        }
+
+        const nodeArr = Array.from(nodes).map(id => ({ id, label: id }))
+        const edgeArr = edges.map(e => ({ source: e.source, target: e.target, weight: e.weight }))
+        return {
+          nodes: nodeArr,
+          edges: edgeArr,
+          meta: { nodes: nodeArr.length, edges: edgeArr.length, t }
+        }
+      }
+
+      // 兜底：没有 steps 就回退到原始概率图
       if (propMode.value === 'multi') {
         return probabilityGraph.value?.graph
       }
@@ -1463,6 +1661,127 @@ export default {
         return probabilityGraphsBySeed.value?.[selectedSeed.value]?.graph
       }
       return null
+    })
+
+    const propHighlightMap = computed(() => {
+      const steps = _getStepsObjForCurrent.value?.steps
+      if (!steps || !steps.length) return {}
+
+      const t = Math.max(0, Math.min(Number(currentStep.value) || 0, stepMaxT.value))
+
+      const seeds = new Set((steps[0]?.nodes || []).map(n => String(n)))
+      const currentLayerNodes = new Set((steps[t]?.nodes || []).map(n => String(n)))
+
+      // previous step nodes
+      const prevLayerNodes = new Set(t > 0 ? (steps[t - 1]?.nodes || []).map(n => String(n)) : [])
+
+      const highlight = {}
+
+      // seeds：红色
+      seeds.forEach(n => { highlight[n] = '#ef4444' })
+
+      // 新增节点：蓝色（t>0 时 steps[t] - steps[t-1]）
+      if (t > 0) {
+        currentLayerNodes.forEach(n => {
+          if (!prevLayerNodes.has(n) && !seeds.has(n)) {
+            highlight[n] = '#1677ff' }
+        })
+      }
+
+      return highlight
+    })
+
+    const propRoots = computed(() => {
+      const steps = _getStepsObjForCurrent.value?.steps
+      const roots = (steps && steps.length) ? (steps[0]?.nodes || []) : []
+      return Array.isArray(roots) ? roots.map(x => String(x)) : []
+    })
+
+    const _buildGraphForStep = (steps, t) => {
+      const maxT = Math.max(0, steps.length - 1)
+      const tt = Math.max(0, Math.min(Number(t) || 0, maxT))
+
+      const nodes = new Set()
+      const edges = []
+      const stepLimit = Math.max(1, Number(stepEdgeLimit.value) || 120)
+
+      const from = edgeDisplayMode.value === 'current' ? tt : 0
+      const to = tt
+
+      for (let i = from; i <= to; i++) {
+        const si = steps[i] || {}
+        const ns = Array.isArray(si.nodes) ? si.nodes : []
+        ns.forEach(n => nodes.add(String(n)))
+
+        const es = Array.isArray(si.edges) ? si.edges : []
+        es
+          .filter(e => {
+            const p = Number(e?.prob)
+            return Number.isFinite(p) ? p >= Number(edgeProbThreshold.value || 0) : false
+          })
+          .sort((a, b) => (Number(b?.prob) || 0) - (Number(a?.prob) || 0))
+          .slice(0, stepLimit)
+          .forEach(e => {
+            const s = e?.source
+            const tt2 = e?.target
+            const p = e?.prob
+            if (s == null || tt2 == null) return
+            edges.push({ source: String(s), target: String(tt2), weight: p })
+            nodes.add(String(s))
+            nodes.add(String(tt2))
+          })
+      }
+
+      const nodeArr = Array.from(nodes).map(id => ({ id, label: id }))
+      const edgeArr = edges.map(e => ({ source: e.source, target: e.target, weight: e.weight }))
+      return {
+        nodes: nodeArr,
+        edges: edgeArr,
+        meta: { nodes: nodeArr.length, edges: edgeArr.length, t: tt }
+      }
+    }
+
+    const _buildHighlightForStep = (steps, t) => {
+      const maxT = Math.max(0, steps.length - 1)
+      const tt = Math.max(0, Math.min(Number(t) || 0, maxT))
+
+      const seeds = new Set((steps[0]?.nodes || []).map(n => String(n)))
+      const currentNodes = new Set((steps[tt]?.nodes || []).map(n => String(n)))
+      const prevNodes = new Set(tt > 0 ? (steps[tt - 1]?.nodes || []).map(n => String(n)) : [])
+
+      const highlight = {}
+      seeds.forEach(n => { highlight[n] = '#ef4444' })
+
+      if (tt > 0) {
+        currentNodes.forEach(n => {
+          if (!prevNodes.has(n) && !seeds.has(n)) {
+            highlight[n] = '#1677ff'
+          }
+        })
+      }
+
+      return highlight
+    }
+
+    const propStepCards = computed(() => {
+      const steps = _getStepsObjForCurrent.value?.steps
+      if (!steps || !steps.length) return []
+
+      // 平铺展示 4 步：t=0..3（不够则按实际最大步数）
+      const maxT = Math.max(0, steps.length - 1)
+      const showMax = Math.min(3, maxT)
+      const cards = []
+      const roots = Array.isArray(steps[0]?.nodes) ? steps[0].nodes.map(x => String(x)) : []
+
+      for (let t = 0; t <= showMax; t++) {
+        cards.push({
+          t,
+          roots,
+          graph: _buildGraphForStep(steps, t),
+          highlightMap: _buildHighlightForStep(steps, t),
+        })
+      }
+      return cards
     })
 
     return {
@@ -1480,6 +1799,10 @@ export default {
       progress,
       statusMessage,
       results,
+      reportLoading,
+      reportError,
+      report,
+      goToReportPage,
       algorithms,
       availableAlgorithms,
       algLoading,
@@ -1551,15 +1874,28 @@ export default {
       propK,
       propBeta,
       propNumSimulations,
+      propMaxSteps,
       edgeProbThreshold,
       topEdgesLimit,
       topEdgesPreviewLimit,
+      edgeDisplayMode,
+      stepEdgeLimit,
       propLoading,
       propError,
       propInfo,
       availableSeeds,
       selectedSeed,
+      currentStep,
+      stepMaxT,
+      isPlaying,
+      togglePlay,
+      prevStep,
+      nextStep,
+      resetStep,
       propGraphForView,
+      propHighlightMap,
+      propRoots,
+      propStepCards,
       topEdgesPreview,
       filteredEdgesCount,
       startPropagation,
@@ -1570,6 +1906,32 @@ export default {
 </script>
 
 <style scoped>
+.report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.report-entry-btn {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+}
+
+.report-entry-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.report-section {
+  margin: 10px 0 16px;
+  padding: 12px;
+  background: #f9fafb;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+}
+
 .identification-container {
   padding: 20px;
   background-color: #f5f7fa;
@@ -1758,9 +2120,75 @@ export default {
 .prop-results {
   margin-top: 12px;
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
+  grid-template-columns: 1fr;
   gap: 16px;
   align-items: start;
+}
+
+.prop-section-wide {
+  width: 100%;
+}
+
+.prop-graph-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+@media (max-width: 1200px) {
+  .prop-graph-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .prop-graph-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.prop-step-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.prop-step-card.active {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.12);
+}
+
+.prop-step-title {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #111827;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.prop-step-graph {
+  position: relative;
+}
+
+.propagation-full-row {
+  width: 100%;
+  margin-top: 20px;
+
+  /* 方案2：突破页面 container 的左右 padding，让传播区域更“贴边全宽” */
+  margin-left: -20px;
+  margin-right: -20px;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+/* 让传播区域突破 bottom-row 两列限制，尽量铺满页面 */
+.propagation-full-inner {
+  width: 100%;
+  max-width: 100%;
 }
 
 .prop-graph {

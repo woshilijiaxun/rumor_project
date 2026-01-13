@@ -152,6 +152,14 @@
                 </div>
               </div>
 
+              <div class="report-section">
+                <div class="report-header">
+                  <h3 class="sub-title">智能报告分析</h3>
+                  <button class="btn btn-secondary report-entry-btn" type="button" @click="goToReportPage">查看报告</button>
+                </div>
+                <div class="report-entry-hint">点击“查看报告”跳转到智能报告页面</div>
+              </div>
+
               <div class="table-wrapper">
                 <table class="results-table">
                   <thead>
@@ -160,6 +168,7 @@
                       <th>节点</th>
                       <th>识别结果</th>
                       <th>重要程度</th>
+                      <th>度(degree)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -171,6 +180,7 @@
                         <span class="importance-dot" :style="{ backgroundColor: getImportanceColor(r.output) }"></span>
                         <span class="importance-text">{{ getImportanceText(r.output) }}</span>
                       </td>
+                      <td class="degree-cell">{{ getDegreeFromReport(r.input) }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -194,6 +204,7 @@ import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import GraphView from './components/GraphView.vue'
 import ErrorModal from './components/ErrorModal.vue'
+
 import { identificationService } from './services/identificationService'
 
 export default {
@@ -214,6 +225,10 @@ export default {
     const resultLoading = ref(false)
     const resultError = ref('')
     const results = ref([])
+
+    const reportLoading = ref(false)
+    const reportError = ref('')
+    const report = ref(null)
 
     const visualLoading = ref(false)
     const visualError = ref('')
@@ -372,6 +387,12 @@ export default {
       return '-'
     }
 
+    const getDegreeFromReport = (nodeId) => {
+      if (!report.value?.top_nodes) return '-'
+      const node = report.value.top_nodes.find(n => n.node_id === String(nodeId))
+      return node?.degree ?? '-'
+    }
+
     const loadTask = async () => {
       if (!taskId) return
       taskLoading.value = true
@@ -402,6 +423,21 @@ export default {
         resultError.value = e?.message || '加载结果失败'
       } finally {
         resultLoading.value = false
+      }
+    }
+
+    const loadReport = async ({ top_n = 20, max_edges = 200000 } = {}) => {
+      if (!taskId) return
+      reportLoading.value = true
+      reportError.value = ''
+      report.value = null
+      try {
+        const res = await identificationService.getReport(taskId, { top_n, max_edges })
+        report.value = res?.data?.report || null
+      } catch (e) {
+        reportError.value = e?.message || '加载报告失败'
+      } finally {
+        reportLoading.value = false
       }
     }
 
@@ -473,6 +509,7 @@ export default {
     const reloadAll = async () => {
       await loadTask()
       await loadResult()
+      await loadReport({ top_n: 20, max_edges: 200000 })
       // 进入详情页后自动触发可视化（不再需要手动点按钮）
       await visualize({ force: true })
     }
@@ -481,10 +518,19 @@ export default {
       router.push('/identification')
     }
 
+    const goToReportPage = () => {
+      if (!taskId) {
+        openErrorModal('缺少任务 ID', '无法跳转到报告页面')
+        return
+      }
+      router.push(`/identification/report/${encodeURIComponent(taskId)}`)
+    }
+
     onMounted(async () => {
       // 首次进入：优先使用 session 缓存加速（不强制刷新）
       await loadTask()
       await loadResult()
+      await loadReport({ top_n: 20, max_edges: 200000 })
       await visualize({ force: false })
     })
 
@@ -499,6 +545,9 @@ export default {
       resultLoading,
       resultError,
       results,
+      reportLoading,
+      reportError,
+      report,
       topK,
       highlightMap,
       nonTopkGray,
@@ -514,12 +563,14 @@ export default {
       visualize,
       reloadAll,
       goBack,
+      goToReportPage,
       formatFileSize,
       formatDate,
       prettyJson,
       formatResultValue,
       getImportanceColor,
       getImportanceText,
+      getDegreeFromReport,
       showErrorModal,
       errorModalMessage,
       errorModalDetail,
@@ -530,6 +581,24 @@ export default {
 </script>
 
 <style scoped>
+.report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.report-entry-btn {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+}
+
+.report-entry-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
 .identification-container {
   padding: 20px;
   background-color: #f5f7fa;

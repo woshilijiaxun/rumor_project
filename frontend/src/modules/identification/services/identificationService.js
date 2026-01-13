@@ -75,7 +75,22 @@ export const identificationService = {
     return data
   },
 
-  async propagation({ task_id, mode = 'single', k = 10, beta = undefined, num_simulations = 500 } = {}) {
+  async getReport(taskId, { top_n = 20, max_edges = 200000 } = {}) {
+    const qs = new URLSearchParams({
+      top_n: String(top_n),
+      max_edges: String(max_edges),
+    })
+    const response = await fetch(`${API_BASE_URL}/tasks/${encodeURIComponent(taskId)}/report?${qs.toString()}`, {
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` }
+    })
+    const data = await response.json().catch(() => null)
+    if (!response.ok || data?.status !== 'success') {
+      throw new Error(data?.message || `获取报告失败 (HTTP ${response.status})`)
+    }
+    return data
+  },
+
+  async propagation({ task_id, mode = 'single', k = 10, beta = undefined, num_simulations = 500, max_steps = 4, return_steps = true } = {}) {
     if (!task_id) {
       throw new Error('缺少参数: task_id')
     }
@@ -85,6 +100,8 @@ export const identificationService = {
       mode,
       k,
       num_simulations,
+      max_steps,
+      return_steps,
     }
 
     if (beta !== undefined && beta !== null && beta !== '') {
