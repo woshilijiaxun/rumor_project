@@ -6,26 +6,7 @@
         <h2 class="welcome-title">欢迎进入谣言关键传播者检测平台</h2>
         <p class="welcome-sub">在这里，你可以高效识别潜在的关键传播者，分析传播路径，降低谣言风险。</p>
       </div>
-      <div class="welcome-grid">
-        <div v-if="isAdmin" class="welcome-item">
-          <h4>用户管理</h4>
-          <p>查看用户列表、基础信息与注册时间，支持后续扩展编辑/禁用等能力。</p>
-          <button class="welcome-btn" @click="$router.push('/users')">前往用户管理</button>
-        </div>
-        <div class="welcome-item">
-          <h4>文件管理</h4>
-          <p>上传、预览、下载与删除文件，支持常见图片/文档/压缩包，单文件 20MB。</p>
-          <button class="welcome-btn" @click="$router.push('/files')">前往文件管理</button>
-        </div>
-        <div class="welcome-item">
-          <h4>统计与概览</h4>
-          <p>快速了解平台用户总数与最近注册时间，后续可扩展更多运营指标。</p>
-          <button class="welcome-btn" @click="scrollToStats">查看概览</button>
-        </div>
-      </div>
-      <div class="welcome-note">提示：你可以从左侧导航快速切换模块，也可以通过上面的快捷入口开始使用。</div>
     </div>
-
     <!-- 今日辟谣 + 联合辟谣（并排） -->
     <div class="debunks-row">
       <!-- 今日辟谣 -->
@@ -105,21 +86,7 @@
 
    
 
-    <!-- 三个简要卡片 -->
-    <div class="home-cards">
-      <div class="card">
-        <h3>社会层面</h3>
-        <p>制造公众恐慌与分裂，削弱社会凝聚力，放大刻板印象与对立情绪。</p>
-      </div>
-      <div class="card">
-        <h3>治理层面</h3>
-        <p>干扰决策与应急响应，造成资源错配，增加监管与辟谣的治理成本。</p>
-      </div>
-      <div class="card">
-        <h3>个体层面</h3>
-        <p>误导健康与财务选择，引发隐私泄露与网络暴力，伤害个人名誉与权益。</p>
-      </div>
-    </div>
+    
 
     <!-- 典型影响（卡片网格，3列x2行） -->
     <div class="impact-section">
@@ -133,21 +100,7 @@
       </div>
     </div>
 
-    <!-- 快捷入口 -->
-    <div class="entry-cards">
-      <div v-if="isAdmin" class="entry" @click="$router.push('/users')">
-        <h4>进入用户管理</h4>
-        <p>查看用户、刷新列表</p>
-      </div>
-      <div class="entry" @click="$router.push('/files')">
-        <h4>文件管理</h4>
-        <p>上传、预览、下载与删除文件</p>
-      </div>
-      <div class="entry" @click="$router.push('/settings')">
-        <h4>系统设置</h4>
-        <p>管理系统配置</p>
-      </div>
-    </div>
+    
 
     <!-- 底部统计 -->
     <div class="stats stats-bottom" ref="statsSection">

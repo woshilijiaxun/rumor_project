@@ -61,8 +61,7 @@ export default {
 <style scoped>
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .page-header h3 { margin: 0; color: #333; }
-.refresh-btn { padding: 8px 16px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
-.refresh-btn:hover { background: #40a9ff; }
+
 .loading, .error { text-align: left; padding: 8px 0; color: #666; }
 .error { color: #d32f2f; }
 .users-table { width: 100%; border-collapse: collapse; }

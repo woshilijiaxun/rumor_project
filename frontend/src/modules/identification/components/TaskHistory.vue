@@ -272,19 +272,6 @@ export default {
   box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
 }
 
-.refresh-btn {
-  padding: 6px 16px;
-  background-color: #e5e7eb;
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background-color 0.3s;
-}
-
-.refresh-btn:hover {
-  background-color: #d1d5db;
-}
 
 .history-content {
   padding: 20px;

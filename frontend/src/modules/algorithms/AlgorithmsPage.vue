@@ -357,8 +357,7 @@ export default {
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .page-header h3 { margin: 0; color: #333; }
 .actions { display: flex; align-items: center; gap: 10px; }
-.refresh-btn { padding: 8px 16px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
-.refresh-btn:hover { background: #40a9ff; }
+
 .btn-primary { padding: 8px 16px; background: #1677ff; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; }
 .btn-primary:hover { background: #4096ff; }
 

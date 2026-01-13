@@ -52,7 +52,7 @@
           <!-- 轮播图 -->
           <div class="carousel" @mouseenter="stopCarousel" @mouseleave="startCarousel">
             <div class="carousel-track" :style="{ transform: 'translateX(-' + (carouselIndex * 100) + '%)' }">
-              <div class="carousel-slide" v-for="(group, i) in carouselSlides" :key="i">
+              <div class="carousel-slide" v-for="(_group, i) in carouselSlides" :key="i">
                 <div class="multi-slide">
                   <div class="tile" v-for="(img, j) in group" :key="j">
                     <img :src="img.src" :alt="img.alt || ('图' + (i*3 + j + 1))" loading="lazy" />
@@ -63,7 +63,7 @@
             <button class="nav prev" @click="prevSlide">‹</button>
             <button class="nav next" @click="nextSlide">›</button>
             <div class="dots">
-              <span v-for="(group, i) in carouselSlides" :key="i" :class="{ active: i === carouselIndex }" @click="goSlide(i)"></span>
+              <span v-for="(_group, i) in carouselSlides" :key="i" :class="{ active: i === carouselIndex }" @click="goSlide(i)"></span>
             </div>
           </div>
 
@@ -97,31 +97,12 @@
 
           <!-- 快捷入口 -->
           <div class="entry-cards">
-            <div class="entry" @click="go('users')">
-              <h4>进入用户管理</h4>
-              <p>查看用户、刷新列表</p>
-            </div>
-            <div class="entry" @click="go('files')">
-              <h4>文件管理</h4>
-              <p>上传、预览、下载与删除文件</p>
-            </div>
             <div class="entry" @click="go('settings')">
               <h4>系统设置</h4>
               <p>管理系统配置</p>
             </div>
-      </div>
-            <!-- 底部统计 -->
-            <div class="stats stats-bottom">
-              <div class="stat-card">
-                <div class="stat-value">{{ statsLoading ? '...' : (stats?.users_total ?? 0) }}</div>
-                <div class="stat-label">用户总数</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-value">{{ statsLoading ? '...' : formatDate(stats?.latest_user_created_at) }}</div>
-                <div class="stat-label">最近注册时间</div>
-              </div>
-            </div>
-    </div>
+          </div>
+        </div>
 
         <!-- 用户管理 -->
         <div v-else-if="activeMenu === 'users'" class="users-page">

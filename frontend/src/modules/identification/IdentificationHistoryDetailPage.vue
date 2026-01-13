@@ -582,18 +582,6 @@ export default {
   background: #f0f7ff;
 }
 
-/* 刷新按钮与返回按钮等尺寸，但用蓝色主按钮样式 */
-.refresh-btn {
-  background: #1677ff;
-  border-color: #1677ff;
-  color: #fff;
-}
-
-.refresh-btn:hover {
-  background: #0d5ccc;
-  border-color: #0d5ccc;
-  color: #fff;
-}
 
 .content-wrapper {
   display: flex;
