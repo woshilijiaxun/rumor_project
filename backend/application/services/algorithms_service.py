@@ -16,6 +16,50 @@ def list_algorithms_paginated(page: int, page_size: int) -> Dict:
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
+def update_algorithms_order(
+    order_ids: List[int],
+    actor_meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    # order_ids: 前端提交的算法 id 顺序（从上到下）
+    ids: List[int] = []
+    for v in (order_ids or []):
+        try:
+            ids.append(int(v))
+        except Exception:
+            continue
+
+    if not ids:
+        return
+
+    pairs = [(algo_id, idx) for idx, algo_id in enumerate(ids)]
+    repo.bulk_update_sort_order(pairs)
+
+    # 审计日志（尽量不影响主流程）
+    try:
+        actor_user_id = None
+        try:
+            actor_user_id = g.user['id']
+        except Exception:
+            actor_user_id = None
+
+        write_log(
+            actor_user_id=actor_user_id,
+            action='ALGORITHM_ORDER_UPDATE',
+            target_type='algorithm',
+            target_id=None,
+            detail=sanitize_detail({
+                'result': 'success',
+                'extra': {
+                    'count': len(ids),
+                    'order_ids': ids,
+                },
+                'actor': actor_meta or {},
+            }),
+        )
+    except Exception:
+        pass
+
+
 def create_algorithm(
     name: str,
     algo_key: str,

@@ -1,7 +1,7 @@
 <template>
   <div class="algorithms-page">
     <div class="page-header">
-      <h3>算法管理</h3>
+      <h3>算法列表</h3>
       <div class="actions">
         <button type="button" class="btn-primary" @click="openCreate">新增算法</button>
         <button type="button" class="refresh-btn" @click="fetchAlgorithms">刷新</button>
@@ -16,7 +16,18 @@
     </div>
 
     <div v-if="!loading && !error" class="cards">
-      <div v-for="a in displayAlgorithms" :key="a.id" class="algo-card">
+      <div
+        v-for="(a, index) in displayAlgorithms"
+        :key="a.id"
+        class="algo-card"
+        draggable="true"
+        @dragstart="onDragStart($event, index)"
+        @dragover="onDragOver($event, index)"
+        @dragleave="onDragLeave"
+        @drop="onDrop($event, index)"
+        :class="{ dragging: draggingIndex === index, 'drag-over': dragOverIndex === index }"
+      >
+        <div class="drag-handle" title="拖动排序" @mousedown.stop @click.stop>⋮⋮</div>
         <div class="card-top">
           <div class="title-row">
             <h2 class="title">{{ a.name || '-' }}</h2>
@@ -134,7 +145,11 @@ export default {
       },
 
       // 记录每个算法卡片下方展开的面板（intro/scene）
-      expanded: {}
+      expanded: {},
+
+      // 拖拽相关
+      draggingIndex: -1,
+      dragOverIndex: -1
     }
   },
   computed: {
@@ -150,6 +165,61 @@ export default {
     }
   },
   methods: {
+    _saveOrderToBackend() {
+      const order = (this.algorithms || []).map(a => a?.id).filter(v => v != null)
+      if (!order.length) return
+      return axios.put('/api/algorithms/order', { order })
+    },
+
+    onDragStart(e, index) {
+      this.draggingIndex = index
+      this.dragOverIndex = index
+      try {
+        e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.setData('text/plain', String(index))
+      } catch {
+        // ignore
+      }
+    },
+    onDragOver(e, index) {
+      e.preventDefault()
+      if (this.draggingIndex < 0) return
+      this.dragOverIndex = index
+      try {
+        e.dataTransfer.dropEffect = 'move'
+      } catch {
+        // ignore
+      }
+    },
+    onDragLeave() {
+      this.dragOverIndex = -1
+    },
+    async onDrop(e, targetIndex) {
+      e.preventDefault()
+      const from = this.draggingIndex
+      if (from < 0 || from === targetIndex) {
+        this.draggingIndex = -1
+        this.dragOverIndex = -1
+        return
+      }
+
+      const list = (this.algorithms || []).slice()
+      const moved = list.splice(from, 1)[0]
+      list.splice(targetIndex, 0, moved)
+      this.algorithms = list
+
+      this.draggingIndex = -1
+      this.dragOverIndex = -1
+
+      try {
+        await this._saveOrderToBackend()
+      } catch (err) {
+        alert(err?.response?.data?.message || err?.message || '保存排序失败')
+        // 失败则刷新回后端顺序
+        this.fetchAlgorithms()
+      }
+    },
+
     fetchAlgorithms() {
       this.loading = true
       this.error = ''
@@ -294,8 +364,6 @@ export default {
     buildDescription(intro, scene) {
       const introText = (intro || '').trim()
       const sceneText = (scene || '').trim()
-      // 采用明确分隔符，便于后续从 description 里再解析出来
-      // 兼容老数据：若解析不到，则 intro=原description, scene=''
       return `【算法介绍】\n${introText}\n\n【适用场景】\n${sceneText}`.trim()
     },
     parseDescription(description) {
@@ -306,26 +374,22 @@ export default {
       const i1 = raw.indexOf(introTag)
       const i2 = raw.indexOf(sceneTag)
 
-      // 新格式
       if (i1 !== -1 && i2 !== -1 && i2 > i1) {
         const introPart = raw.slice(i1 + introTag.length, i2).trim()
         const scenePart = raw.slice(i2 + sceneTag.length).trim()
         return { intro: introPart, scene: scenePart }
       }
 
-      // 兼容：只有介绍
       if (i1 !== -1 && i2 === -1) {
         const introPart = raw.slice(i1 + introTag.length).trim()
         return { intro: introPart, scene: '' }
       }
 
-      // 兼容：只有场景
       if (i1 === -1 && i2 !== -1) {
         const scenePart = raw.slice(i2 + sceneTag.length).trim()
         return { intro: '', scene: scenePart }
       }
 
-      // 老数据：没有标记，全部当作“算法介绍”
       return { intro: raw.trim(), scene: '' }
     },
 
@@ -336,7 +400,6 @@ export default {
     togglePanel(id, which) {
       const key = String(id)
       const cur = this.expanded[key] || ''
-      // Vue3 不需要 $set，这里做兼容写法
       this.expanded[key] = (cur === which ? '' : which)
     },
 
@@ -354,6 +417,38 @@ export default {
 </script>
 
 <style scoped>
+.algo-card {
+  position: relative;
+}
+
+.drag-handle {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: rgba(255,255,255,0.9);
+  color: #9ca3af;
+  cursor: grab;
+  user-select: none;
+  line-height: 1;
+}
+
+.drag-handle:hover {
+  color: #1677ff;
+  border-color: #93c5fd;
+}
+
+.algo-card.dragging {
+  opacity: 0.55;
+}
+
+.algo-card.drag-over {
+  outline: 2px dashed #93c5fd;
+  outline-offset: 4px;
+}
+
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .page-header h3 { margin: 0; color: #333; }
 .actions { display: flex; align-items: center; gap: 10px; }
@@ -436,4 +531,3 @@ export default {
 .actions button.primary { background: #1890ff; border-color: #1890ff; color: #fff; }
 .actions button:disabled { opacity: .6; cursor: not-allowed; }
 </style>
-

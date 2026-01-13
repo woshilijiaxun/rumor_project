@@ -25,6 +25,29 @@ def list_algorithms():
         return fail("系统错误: " + str(e), http_code=500, status="error")
 
 
+@bp.route('/algorithms/order', methods=['PUT'])
+@require_admin
+def update_algorithms_order():
+    data = request.get_json() or {}
+    order = data.get('order')
+    if not isinstance(order, list) or not order:
+        return fail("order 必须为非空数组（算法 id 列表）", http_code=400)
+
+    try:
+        algorithms_service.update_algorithms_order(
+            order_ids=order,
+            actor_meta={
+                'ip': request.remote_addr,
+                'user_agent': request.headers.get('User-Agent', ''),
+            },
+        )
+        return ok(message="排序已保存")
+    except Error as e:
+        return fail("数据库错误: " + str(e), http_code=500, status="error")
+    except Exception as e:
+        return fail("系统错误: " + str(e), http_code=500, status="error")
+
+
 @bp.route('/algorithms', methods=['POST'])
 @require_admin
 def create_algorithm():

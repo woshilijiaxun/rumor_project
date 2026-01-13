@@ -88,6 +88,7 @@ def create_tables():
             description TEXT,
             type VARCHAR(100),
             status VARCHAR(20) DEFAULT 'active',
+            sort_order INT NOT NULL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY ux_algorithms_algo_key (algo_key),

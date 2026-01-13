@@ -401,7 +401,7 @@ export default {
 
 /* 上传按钮（与首页统一） */
 .file-actions { display: flex; align-items: center; gap: 10px; }
-.btn-upload { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 8px; border: 1px solid #1677ff; color: #fff; background: linear-gradient(90deg, #1677ff 0%, #4096ff 100%); box-shadow: 0 4px 10px rgba(22, 119, 255, 0.25); cursor: pointer; font-weight: 600; font-size: 14px; transition: background .2s ease, box-shadow .2s ease, transform .08s ease; }
+.btn-upload { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 6px; border: 1px solid #1677ff; color: #fff; background: linear-gradient(90deg, #1677ff 0%, #4096ff 100%); box-shadow: 0 4px 10px rgba(22, 119, 255, 0.25); cursor: pointer; font-weight: 600; font-size: 14px; transition: background .2s ease, box-shadow .2s ease, transform .08s ease; }
 .btn-upload:hover { background: linear-gradient(90deg, #3b8cff 0%, #62a6ff 100%); box-shadow: 0 6px 14px rgba(22, 119, 255, 0.32); }
 .btn-upload:active { transform: translateY(1px); }
 .btn-upload .icon { width: 16px; height: 16px; flex: 0 0 16px; }
