@@ -10,14 +10,23 @@
 <script>
 import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import cytoscape from 'cytoscape'
+import fcose from 'cytoscape-fcose'
+cytoscape.use(fcose)
 
 export default {
   name: 'PropagationGraphView',
   props: {
-    graph: { type: Object, required: true },
+    // 兼容旧用法：graph 仍然可传；若传 baseGraph，则以 baseGraph 为底图
+    graph: { type: Object, required: false, default: () => ({ nodes: [], edges: [] }) },
+    baseGraph: { type: Object, required: false, default: null },
+    // 传播/高亮边（可选）：[{ source, target }]
+    overlayEdges: { type: Array, required: false, default: () => [] },
+
     highlightMap: { type: Object, default: () => ({}) },
     roots: { type: Array, default: () => [] },
-    height: { type: String, default: '420px' }
+    height: { type: String, default: '420px' },
+    freezeLayout: { type: Boolean, default: false },
+    dimUnhighlighted: { type: Boolean, default: true }
   },
   setup(props, { expose }) {
     const containerRef = ref(null)
@@ -26,45 +35,58 @@ export default {
     const FIT_PADDING = 60
     let initialViewport = null
 
-    const hasData = computed(() => Array.isArray(props.graph?.nodes) && props.graph.nodes.length > 0)
+    const activeGraph = computed(() => props.baseGraph || props.graph)
 
-    const buildElements = (g) => {
+    const hasData = computed(() => Array.isArray(activeGraph.value?.nodes) && activeGraph.value.nodes.length > 0)
+
+    const buildElements = () => {
+      const g = activeGraph.value
+      if (!g) return []
+
       const highlight = props.highlightMap || {}
       const nodes = (g.nodes || []).map(n => {
         const id = String(n.id)
         const color = highlight[id]
+        const dim = props.dimUnhighlighted && !color
         return {
           data: { id, label: n.label ?? id, highlightColor: color || '' },
-          classes: color ? 'topk' : 'normal'
+          classes: color ? 'topk' : (dim ? 'dim' : 'normal')
         }
       })
 
-      const edges = (g.edges || []).map(e => ({
-        data: {
-          source: String(e.source),
-          target: String(e.target),
-          weight: e.weight != null ? Number(e.weight) : 0,
-          label: e.weight != null ? String(e.weight) : ''
+      const overlayEdgeSet = new Set(props.overlayEdges.map(e => `${e.source}|${e.target}`))
+
+      const edges = (g.edges || []).map(e => {
+        const key = `${e.source}|${e.target}`
+        const isOverlay = overlayEdgeSet.has(key)
+        return {
+          data: {
+            source: String(e.source),
+            target: String(e.target),
+            weight: e.weight != null ? Number(e.weight) : 0,
+            label: e.weight != null ? String(e.weight) : ''
+          },
+          classes: isOverlay ? 'overlay-edge' : ''
         }
-      }))
+      })
 
       return [...nodes, ...edges]
     }
 
     const runLayoutAndFit = () => {
       if (!cy) return
-      const roots = Array.isArray(props.roots) ? props.roots.map(r => String(r)) : []
-      const layout = cy.layout({
-        name: 'breadthfirst',
+        const layout = cy.layout({
+        name: 'fcose',
         animate: false,
+        randomize: true,
         fit: true,
         padding: FIT_PADDING,
-        directed: true,
-        spacingFactor: 1.25,
-        circle: false,
-        grid: false,
-        roots: roots.length ? roots : undefined,
-        orientation: 'horizontal'
+        quality: 'default',
+        nodeSeparation: 80,
+        nodeRepulsion: () => 6000,
+        idealEdgeLength: () => 150,
+        edgeElasticity: () => 0.2,
+        gravity: 0.25
       })
       layout.run()
       cy.fit(undefined, FIT_PADDING)
@@ -95,15 +117,23 @@ export default {
 
       cy = cytoscape({
         container: containerRef.value,
-        elements: buildElements(props.graph || {}),
+        elements: buildElements(),
         style: [
+          // 基础样式（与 GraphView 保持一致）
           { selector: 'node', style: { 'background-color': '#1677ff', 'label': 'data(label)', 'font-size': 10, 'color': '#333', 'text-opacity': 0, 'min-zoomed-font-size': 10 } },
-          { selector: 'edge', style: { 'line-color': '#9ca3af', 'width': 'mapData(weight, 0, 1, 1, 6)', 'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#9ca3af', 'arrow-scale': 0.8, 'label': 'data(label)', 'font-size': 8, 'color': '#666', 'text-opacity': 0, 'min-zoomed-font-size': 8 } },
+          { selector: 'edge', style: { 'line-color': '#9ca3af', 'width': 1.5, 'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#9ca3af', 'arrow-scale': 0.8, 'label': 'data(label)', 'font-size': 8, 'color': '#666', 'text-opacity': 0, 'min-zoomed-font-size': 8 } },
           { selector: '.hovered', style: { 'text-opacity': 1 } },
           { selector: 'node:selected', style: { 'background-color': '#0d5ccc', 'text-opacity': 1 } },
           { selector: 'edge:selected', style: { 'line-color': '#0d5ccc', 'target-arrow-color': '#0d5ccc', 'text-opacity': 1 } },
+          
+          // 传播可视化定制样式
           { selector: 'node.topk', style: { 'background-color': 'data(highlightColor)', 'border-width': 2, 'border-color': 'data(highlightColor)', 'opacity': 1, 'text-opacity': 1 } },
-          { selector: 'node.normal', style: { 'opacity': 1 } }
+          { selector: 'node.dim', style: { 'background-color': '#9ca3af', 'opacity': 0.22, 'text-opacity': 0 } },
+          { selector: 'node.normal', style: { 'opacity': 1 } },
+          
+          // 传播边高亮
+          { selector: 'edge.overlay-edge', style: { 'line-color': '#ef4444', 'target-arrow-color': '#ef4444', 'opacity': 0.95, 'width': 2.5 } },
+          { selector: 'edge.dim', style: { 'line-color': '#cbd5e1', 'target-arrow-color': '#cbd5e1', 'opacity': 0.18 } }
         ],
         wheelSensitivity: 0.2
       })
@@ -130,30 +160,71 @@ export default {
     onMounted(mountCytoscape)
     onBeforeUnmount(destroy)
 
-    watch(() => props.graph, () => {
+    const applyOverlayEdges = () => {
+      if (!cy) return
+      const overlayEdgeSet = new Set((props.overlayEdges || []).map(e => `${e.source}|${e.target}`))
+      cy.edges().forEach(edge => {
+        const key = `${edge.data('source')}|${edge.data('target')}`
+        edge.removeClass('overlay-edge')
+        if (overlayEdgeSet.has(key)) {
+          edge.addClass('overlay-edge')
+        }
+      })
+    }
+
+    watch([() => props.graph, () => props.baseGraph], () => {
       if (!cy) return
       cy.elements().remove()
-      cy.add(buildElements(props.graph || {}))
-      runLayoutAndFit()
-      saveInitialViewport()
+      cy.add(buildElements())
+      if (!props.freezeLayout) {
+        runLayoutAndFit()
+        saveInitialViewport()
+      }
+      applyOverlayEdges()
+    }, { deep: true })
+
+    watch(() => props.overlayEdges, () => {
+      if (!cy) return
+      applyOverlayEdges()
+      cy.style().update()
     }, { deep: true })
 
     watch([() => props.highlightMap, () => props.roots], () => {
       if (!cy) return
       const highlight = props.highlightMap || {}
-      props.graph?.nodes?.forEach(n => {
+      const g = activeGraph.value
+
+      g?.nodes?.forEach(n => {
         const id = String(n.id)
         const ele = cy.getElementById(id)
         if (ele && ele.nonempty) {
           const color = highlight[id]
           ele.data('highlightColor', color || '')
-          ele.removeClass('topk normal')
-          ele.addClass(color ? 'topk' : 'normal')
+          ele.removeClass('topk normal dim')
+          const dim = props.dimUnhighlighted && !color
+          ele.addClass(color ? 'topk' : (dim ? 'dim' : 'normal'))
         }
       })
+
+      if (props.dimUnhighlighted) {
+        const hlIds = new Set(Object.keys(highlight || {}).map(x => String(x)))
+        cy.edges().forEach(edge => {
+          const s = String(edge.data('source'))
+          const t = String(edge.data('target'))
+          edge.removeClass('dim')
+          if (!hlIds.has(s) || !hlIds.has(t)) {
+            edge.addClass('dim')
+          }
+        })
+      } else {
+        cy.edges().removeClass('dim')
+      }
+
       cy.style().update()
-      runLayoutAndFit()
-      saveInitialViewport()
+      if (!props.freezeLayout) {
+        runLayoutAndFit()
+        saveInitialViewport()
+      }
     }, { deep: true })
 
     return { containerRef, hasData, onResetClick }

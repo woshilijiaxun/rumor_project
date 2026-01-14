@@ -352,21 +352,16 @@
           <div v-if="propGraphForView" class="prop-results">
             <div class="prop-section prop-section-wide">
               <div class="prop-section-header">
-                <h3 class="prop-section-title">传播路径可视化（t=0..3 平铺）</h3>
-                <div class="edges-meta" v-if="stepMaxT > 0">当前高亮：t={{ currentStep }} / {{ stepMaxT }}</div>
+                <h3 class="prop-section-title">传播路径可视化</h3>
+                <div class="edges-meta" v-if="stepMaxT > 0">当前高亮：t={{ currentStep }} / {{ stepMaxT }}（可左右滑动查看全部时间步）</div>
               </div>
 
               <div class="step-controls" v-if="stepMaxT > 0">
-                <div class="step-row">
-                  <button class="btn btn-secondary" type="button" :disabled="propLoading || currentStep <= 0" @click="prevStep">上一步</button>
-                  <button class="btn btn-secondary" type="button" :disabled="propLoading" @click="togglePlay">{{ isPlaying ? '暂停' : '播放' }}</button>
-                  <button class="btn btn-secondary" type="button" :disabled="propLoading || currentStep >= stepMaxT" @click="nextStep">下一步</button>
-                  <button class="btn btn-secondary" type="button" :disabled="propLoading" @click="resetStep">复位</button>
-                </div>
+                <div class="step-row"></div>
                 <input class="step-slider" type="range" min="0" :max="stepMaxT" step="1" v-model.number="currentStep" />
               </div>
 
-              <div class="prop-graph-grid" v-if="propStepCards.length">
+              <div class="prop-graph-scroll" v-if="propStepCards.length">
                 <div
                   v-for="card in propStepCards"
                   :key="card.t"
@@ -377,9 +372,11 @@
                   <div class="prop-step-title">t={{ card.t }}</div>
                   <div class="prop-step-graph">
                     <PropagationGraphView
-                      :graph="card.graph"
+                      :base-graph="card.baseGraph"
+                      :overlay-edges="card.overlayEdges"
                       :highlight-map="card.highlightMap"
                       :roots="card.roots"
+                      :freeze-layout="true"
                       height="360px"
                     />
                   </div>
@@ -427,6 +424,63 @@
 
       </div>
     </div>
+    <!-- 文件选择弹出框（独立于布局） -->
+    <div v-if="showFileModal" class="modal-overlay" @click.self="closeFileModal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>选择文件</h3>
+          <button class="modal-close" @click="closeFileModal">×</button>
+        </div>
+        <div class="modal-body">
+          <div v-if="loadingExistingFiles" class="loading-state">
+            <p>加载文件列表中...</p>
+          </div>
+          <div v-else-if="existingFilesError" class="error-state">
+            <p>{{ existingFilesError }}</p>
+            <button @click="loadExistingFiles" class="retry-btn">重试</button>
+          </div>
+          <template v-else>
+            <div class="existing-filter-bar">
+              <input
+                v-model="existingSearch"
+                type="text"
+                class="existing-search-input"
+                placeholder="搜索已有文件名或类型..."
+              />
+            </div>
+            <div v-if="totalExistingFiles === 0" class="empty-state">
+              <p>暂无可用文件</p>
+            </div>
+            <div v-else class="files-list" ref="filesListRef">
+              <div
+                v-for="file in displayedExistingFiles"
+                :key="file.id"
+                class="file-item"
+                :class="{ selected: tempSelectedFile?.id === file.id }"
+                @click="selectTempFileAndClose(file)"
+              >
+                <div class="file-info">
+                  <div class="file-name">{{ getFileNameWithoutExt(file.original_name) }}</div>
+                  <div class="file-meta">
+                    <span class="file-type">{{ getFileExtension(file.original_name) }}</span>
+                    <span class="file-size">{{ formatFileSize(file.size_bytes) }}</span>
+                    <span class="file-date">{{ formatDate(file.created_at) }}</span>
+                  </div>
+                </div>
+                <div class="file-checkbox">
+                  <input
+                    type="radio"
+                    :checked="tempSelectedFile?.id === file.id"
+                    @change="selectTempFileAndClose(file)"
+                  />
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
     <TaskHistoryModal
       v-if="showHistoryModal"
       :tasks="historyTasks"
@@ -548,7 +602,7 @@ export default {
     const propBeta = ref('')
     const propNumSimulations = ref(500)
     const propMaxSteps = ref(4)
-    const edgeProbThreshold = ref(0.1)
+    const edgeProbThreshold = ref(0)
     const topEdgesLimit = ref(200)
     const topEdgesPreviewLimit = ref(20)
 
@@ -1767,18 +1821,61 @@ export default {
       const steps = _getStepsObjForCurrent.value?.steps
       if (!steps || !steps.length) return []
 
-      // 平铺展示 4 步：t=0..3（不够则按实际最大步数）
+      // 平铺展示全部时间步：t=0..maxT（maxT 由后端 steps 长度决定，后端又受“时间步数”参数影响）
       const maxT = Math.max(0, steps.length - 1)
-      const showMax = Math.min(3, maxT)
+      const showMax = maxT
       const cards = []
       const roots = Array.isArray(steps[0]?.nodes) ? steps[0].nodes.map(x => String(x)) : []
 
+      // 底图来源选 C：使用原始网络拓扑（左侧“可视化网络”返回的 visualData.graph）
+      // 若尚未加载 visualData，则退化为基于传播 steps 构造的图
+      const baseGraph = visualData.value?.graph || _buildGraphForStep(steps, showMax)
+
+      // 用于从 steps 汇总传播边（按时间步累积）
+      const stepEdges = steps.map((st) => {
+        const es = Array.isArray(st?.edges) ? st.edges : []
+        return es
+          .filter(e => {
+            const p = Number(e?.prob)
+            return Number.isFinite(p) ? p >= Number(edgeProbThreshold.value || 0) : false
+          })
+          .map(e => ({ source: String(e?.source), target: String(e?.target) }))
+          .filter(e => e.source && e.target)
+      })
+
       for (let t = 0; t <= showMax; t++) {
+        // t=0 仅种子红；t>0 累积激活节点都红
+        const activated = new Set()
+        for (let i = 0; i <= t; i++) {
+          const ns = Array.isArray(steps[i]?.nodes) ? steps[i].nodes : []
+          ns.forEach(n => activated.add(String(n)))
+        }
+
+        const highlightMap = {}
+        activated.forEach(id => { highlightMap[id] = '#ef4444' })
+
+        // 红色传播边高亮：
+        // - cumulative：高亮 0..t 的传播边
+        // - current：只高亮第 t 步的传播边
+        const overlayEdgeSet = new Set()
+        if (edgeDisplayMode.value === 'current') {
+          ;(stepEdges[t] || []).forEach(e => overlayEdgeSet.add(`${e.source}|${e.target}`))
+        } else {
+          for (let i = 0; i <= t; i++) {
+            ;(stepEdges[i] || []).forEach(e => overlayEdgeSet.add(`${e.source}|${e.target}`))
+          }
+        }
+        const overlayEdges = Array.from(overlayEdgeSet).map(k => {
+          const [source, target] = k.split('|')
+          return { source, target }
+        })
+
         cards.push({
           t,
           roots,
-          graph: _buildGraphForStep(steps, t),
-          highlightMap: _buildHighlightForStep(steps, t),
+          baseGraph,
+          overlayEdges,
+          highlightMap,
         })
       }
       return cards
@@ -2129,12 +2226,27 @@ export default {
   width: 100%;
 }
 
-.prop-graph-grid {
+.prop-graph-scroll {
   width: 100%;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: flex;
   gap: 12px;
-  align-items: start;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  align-items: stretch;
+  scroll-snap-type: x mandatory;
+}
+
+.prop-graph-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.prop-graph-scroll::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 999px;
+}
+
+.prop-graph-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 @media (max-width: 1200px) {
@@ -2150,10 +2262,13 @@ export default {
 }
 
 .prop-step-card {
+  flex: 0 0 320px;
+  max-width: 320px;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   overflow: hidden;
   background: #fff;
+  scroll-snap-align: start;
 }
 
 .prop-step-card.active {
