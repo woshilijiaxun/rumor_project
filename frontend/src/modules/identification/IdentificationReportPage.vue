@@ -15,6 +15,7 @@
         </div>
         <div class="header-actions-right">
           <button class="back-btn refresh-btn" type="button" @click="reload">刷新</button>
+          <button class="back-btn" type="button" @click="exportReport" :disabled="reportExporting">{{ reportExporting ? '导出中...' : '导出报告' }}</button>
           <button class="back-btn" type="button" @click="goBack">返回</button>
         </div>
       </div>
@@ -150,6 +151,45 @@ export default {
       await loadReport({ top_n: 20, max_edges: 200000 })
     }
 
+    const reportExporting = ref(false)
+
+    const exportReport = async () => {
+      if (reportExporting.value) return
+      try {
+        reportExporting.value = true
+
+        const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001/api'
+        const url = `${apiBaseUrl}/identification/tasks/${encodeURIComponent(taskId)}/report/html`
+
+        const token = (typeof window !== 'undefined') ? localStorage.getItem('token') : ''
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        })
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          throw new Error(text || `导出失败（HTTP ${res.status}）`)
+        }
+
+        const blob = await res.blob()
+        const blobUrl = window.URL.createObjectURL(blob)
+
+        const a = document.createElement('a')
+        a.href = blobUrl
+        a.download = `identification_report_${taskId}.html`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+
+        window.URL.revokeObjectURL(blobUrl)
+      } catch (e) {
+        openErrorModal('导出报告失败', e?.message || String(e))
+      } finally {
+        reportExporting.value = false
+      }
+    }
+
     const goBack = () => {
       router.back()
     }
@@ -171,6 +211,8 @@ export default {
       highlightMap,
       toggleNonTopkGray,
       reload,
+      exportReport,
+      reportExporting,
       goBack,
       showErrorModal,
       errorModalMessage,
