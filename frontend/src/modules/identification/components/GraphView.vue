@@ -120,7 +120,17 @@ export default {
       // interactions kept (omitted here for brevity)
     }
 
-    const destroy = () => { if (cy) { cy.destroy(); cy = null } }
+    const destroy = () => {
+      if (cy) {
+        try {
+          cy.removeAllListeners()
+        } catch (e) {
+          // ignore
+        }
+        cy.destroy()
+        cy = null
+      }
+    }
 
     onMounted(mountCytoscape)
     onBeforeUnmount(destroy)

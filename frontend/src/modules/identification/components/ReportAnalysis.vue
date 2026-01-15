@@ -143,9 +143,9 @@
           <!-- 治理建议 actions -->
           <div v-if="sec.id === 'governance_actions'" class="section-block">
             <div v-if="Array.isArray(sec.data?.actions) && sec.data.actions.length" class="actions">
-              <div v-for="(a, idx) in sec.data.actions" :key="idx" class="action">
+              <div v-for="(a, idx) in sortedGovernanceActions(sec.data.actions)" :key="idx" class="action">
                 <div class="action-title-row">
-                  <span class="badge" :class="`p-${String(a.priority || '').toLowerCase()}`">{{ a.priority || 'P2' }}</span>
+                  <span class="badge" :class="`p-${String(a.priority || '').toLowerCase()}`">{{ formatPriority(a.priority) }}</span>
                   <span class="action-title">{{ a.title || '处置建议' }}</span>
                 </div>
 
@@ -259,7 +259,7 @@ export default {
     nonTopkGray: { type: Boolean, default: true },
   },
   emits: ['toggle-non-topk-gray'],
-  setup(props, { emit }) {
+  setup(props) {
     /* ---------------- 传播可视化（报告页专用简化版） ---------------- */
     const _getPropagationMulti = computed(() => {
       const secs = Array.isArray(props.report?.sections) ? props.report.sections : []
@@ -422,6 +422,34 @@ export default {
       return '未知'
     }
 
+    const _priorityRank = (p) => {
+      const pp = String(p || '').trim().toUpperCase()
+      if (pp === 'P0') return 0
+      if (pp === 'P1') return 1
+      if (pp === 'P2') return 2
+      return 9
+    }
+
+    const sortedGovernanceActions = (actions) => {
+      const arr = Array.isArray(actions) ? actions.slice() : []
+      // 稳定排序：同优先级保持原顺序
+      return arr
+        .map((a, idx) => ({ a, idx }))
+        .sort((x, y) => {
+          const d = _priorityRank(x.a?.priority) - _priorityRank(y.a?.priority)
+          return d !== 0 ? d : (x.idx - y.idx)
+        })
+        .map(x => x.a)
+    }
+
+    const formatPriority = (priority) => {
+      const p = String(priority || 'P2').trim().toUpperCase()
+      if (p === 'P0') return '紧急（P0）'
+      if (p === 'P1') return '高优先级（P1）'
+      if (p === 'P2') return '中优先级（P2）'
+      return `优先级（${p}）`
+    }
+
     const formatNumber = (val, precision = 4) => {
       const n = Number(val)
       if (!Number.isFinite(n)) return '-'
@@ -441,6 +469,8 @@ export default {
 
     return {
       formatRiskLevel,
+      formatPriority,
+      sortedGovernanceActions,
       formatNumber,
       formatPercent,
       formatNeighbors,

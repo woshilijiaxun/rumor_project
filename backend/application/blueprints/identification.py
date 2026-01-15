@@ -475,8 +475,8 @@ def get_identification_report(task_id: str):
         try:
             k_prop = request.args.get('prop_k', default=10, type=int)
             k_prop = max(1, min(int(k_prop or 10), 50))
-            num_simulations = request.args.get('prop_num_simulations', default=500, type=int)
-            num_simulations = max(10, min(int(num_simulations or 500), 5000))
+            num_simulations = request.args.get('prop_num_simulations', default=10, type=int)
+            num_simulations = max(10, min(int(num_simulations or 500), 1000))
             edge_threshold = request.args.get('prop_edge_threshold', default=0.1, type=float)
             edge_threshold = float(edge_threshold or 0.0)
             max_edges_in_view = request.args.get('prop_top_edges', default=200, type=int)
@@ -608,19 +608,11 @@ def get_identification_report(task_id: str):
             propagation['multi']['error'] = str(_e_prop)
 
         # --- 治理建议（引入传播预测 + 桥接点/介数/割点） ---
-        top10_ratio = (risk or {}).get('top10_ratio')
+        # 说明：不再根据 risk 推断一个“单一优先级”，而是同时输出 P0/P1/P2 三档处置建议。
         largest_comp_ratio = graph_summary.get('largest_component_ratio')
 
-        def _priority_from_risk(level: str) -> str:
-            if level == 'high':
-                return 'P0'
-            if level == 'medium':
-                return 'P1'
-            if level == 'low':
-                return 'P2'
-            return 'P2'
-
-        priority = _priority_from_risk((risk or {}).get('level'))
+        # legacy 字段兼容（summary/sections 内仍给一个 priority，但不再作为生成 actions 的依据）
+        priority = 'P1'
 
         # --- 治理建议：工单化 + evidence（风险+结构+传播+桥接点/割点） ---
         def _op(type_: str, desc: str):
@@ -709,78 +701,77 @@ def get_identification_report(task_id: str):
         top3 = [x.get('node_id') for x in top_nodes_detail[:3] if x.get('node_id')]
         top10 = [x.get('node_id') for x in top_nodes_detail[:10] if x.get('node_id')]
 
-        # P0/P1：Top 节点处置（强绑定风险）
-        if priority == 'P0':
-            actions.append({
-                'priority': 'P0',
-                'title': '对Top节点执行“人工复核 + 限制转发/降权 + 标记高风险”，必要时升级禁言/封禁',
-                'targets': {
-                    'nodes': top3,
-                    'scope': 'top_nodes',
-                },
-                'operations': [
-                    _op('生成工单', '为Top-3节点生成处置工单（P0），进入人工复核流程。'),
-                    _op('人工复核', '核验Top-3节点主体/账号真实性、异常行为与传播上下文。'),
-                    _op('标记为高风险', '对Top-3节点添加高风险标签，进入重点监控队列。'),
-                    _op('限制转发', '对Top-3节点及其1跳邻域设置转发/扩散限制（临时策略）。'),
-                    _op('降权', '对Top-3节点内容/触达进行降权，降低外溢扩散。'),
-                    _op('发告警', '向治理负责人推送P0告警，要求在规定时限内完成处置闭环。'),
-                    _op('禁言', '若复核确认高风险且持续扩散，执行禁言（可配置时长）。'),
-                    _op('封禁', '若确认恶意或严重违规，执行封禁并留存证据。'),
-                ],
-                'reason': '风险高：头部集中且Top节点对扩散贡献显著，优先处置可快速降低总体风险。',
-                'evidence': {
-                    **_evidence_base(),
-                    'top_nodes': top_nodes_detail[:3],
-                    'bridges': bridges_info,
-                    'propagation_top_edges': prop_top_edges,
-                },
-            })
-        elif priority == 'P1':
-            actions.append({
-                'priority': 'P1',
-                'title': '对Top节点执行“抽样人工复核 + 监测 + 必要时限制转发/降权”',
-                'targets': {
-                    'nodes': top10,
-                    'scope': 'top_nodes',
-                },
-                'operations': [
-                    _op('生成工单', '为Top-10节点生成处置工单（P1），优先处理Top-5。'),
-                    _op('人工复核', '对Top-10节点进行抽样核验（建议Top-5全量复核）。'),
-                    _op('标记为高风险', '对Top节点加入重点关注名单（风险标签可按复核结果更新）。'),
-                    _op('发告警', '当Top节点分数/排名快速上升时触发告警。'),
-                    _op('限制转发', '对Top节点触发阈值时启用转发限制。'),
-                    _op('降权', '对Top节点触发阈值时启用降权策略。'),
-                ],
-                'reason': '风险中：存在头部集中趋势，先控Top节点并建立监测闭环。',
-                'evidence': {
-                    **_evidence_base(),
-                    'top_nodes': top_nodes_detail[:10],
-                    'bridges': bridges_info,
-                    'propagation_top_edges': prop_top_edges,
-                },
-            })
-        else:
-            actions.append({
-                'priority': 'P2',
-                'title': '持续监测：关注Top节点与传播高概率链路变化，必要时升级处置',
-                'targets': {
-                    'nodes': top10[:5],
-                    'scope': 'top_nodes',
-                },
-                'operations': [
-                    _op('生成工单', '为Top节点生成观察工单（P2），定期复核。'),
-                    _op('发告警', '当Top10占比/Top1突出度上升时自动升级告警。'),
-                    _op('标记为高风险', '对进入Top节点队列的新节点自动打标并进入观察。'),
-                ],
-                'reason': '风险低：分布相对分散，优先监测与趋势预警。',
-                'evidence': {
-                    **_evidence_base(),
-                    'top_nodes': top_nodes_detail[:10],
-                    'bridges': bridges_info,
-                    'propagation_top_edges': prop_top_edges,
-                },
-            })
+        # Top 节点处置：同时输出 P0/P1/P2 三档建议（不依赖 risk 判定）
+        actions.append({
+            'priority': 'P0',
+            'title': '对Top节点执行“人工复核 + 限制转发/降权 + 标记高风险”，必要时升级禁言/封禁',
+            'targets': {
+                'nodes': top3,
+                'scope': 'top_nodes',
+            },
+            'operations': [
+                _op('生成工单', '为Top-3节点生成处置工单（P0），进入人工复核流程。'),
+                _op('人工复核', '核验Top-3节点主体/账号真实性、异常行为与传播上下文。'),
+                _op('标记为高风险', '对Top-3节点添加高风险标签，进入重点监控队列。'),
+                _op('限制转发', '对Top-3节点及其1跳邻域设置转发/扩散限制（临时策略）。'),
+                _op('降权', '对Top-3节点内容/触达进行降权，降低外溢扩散。'),
+                _op('发告警', '向治理负责人推送P0告警，要求在规定时限内完成处置闭环。'),
+                _op('禁言', '若复核确认高风险且持续扩散，执行禁言（可配置时长）。'),
+                _op('封禁', '若确认恶意或严重违规，执行封禁并留存证据。'),
+            ],
+            'reason': '提供P0处置模板：适用于需要快速压制扩散的场景。',
+            'evidence': {
+                **_evidence_base(),
+                'top_nodes': top_nodes_detail[:3],
+                'bridges': bridges_info,
+                'propagation_top_edges': prop_top_edges,
+            },
+        })
+
+        actions.append({
+            'priority': 'P1',
+            'title': '对Top节点执行“抽样人工复核 + 监测 + 必要时限制转发/降权”',
+            'targets': {
+                'nodes': top10,
+                'scope': 'top_nodes',
+            },
+            'operations': [
+                _op('生成工单', '为Top-10节点生成处置工单（P1），优先处理Top-5。'),
+                _op('人工复核', '对Top-10节点进行抽样核验（建议Top-5全量复核）。'),
+                _op('标记为高风险', '对Top节点加入重点关注名单（风险标签可按复核结果更新）。'),
+                _op('发告警', '当Top节点分数/排名快速上升时触发告警。'),
+                _op('限制转发', '对Top节点触发阈值时启用转发限制。'),
+                _op('降权', '对Top节点触发阈值时启用降权策略。'),
+            ],
+            'reason': '提供P1处置模板：适用于需要监测并逐步收敛风险的场景。',
+            'evidence': {
+                **_evidence_base(),
+                'top_nodes': top_nodes_detail[:10],
+                'bridges': bridges_info,
+                'propagation_top_edges': prop_top_edges,
+            },
+        })
+
+        actions.append({
+            'priority': 'P2',
+            'title': '持续监测：关注Top节点与传播高概率链路变化，必要时升级处置',
+            'targets': {
+                'nodes': top10[:5],
+                'scope': 'top_nodes',
+            },
+            'operations': [
+                _op('生成工单', '为Top节点生成观察工单（P2），定期复核。'),
+                _op('发告警', '当Top10占比/Top1突出度上升时自动升级告警。'),
+                _op('标记为高风险', '对进入Top节点队列的新节点自动打标并进入观察。'),
+            ],
+            'reason': '提供P2处置模板：适用于常态化观察与趋势预警场景。',
+            'evidence': {
+                **_evidence_base(),
+                'top_nodes': top_nodes_detail[:10],
+                'bridges': bridges_info,
+                'propagation_top_edges': prop_top_edges,
+            },
+        })
 
         # P0/P1：结构阻断（桥接点/割点）
         if bridges_info and (betweenness_top or articulation_points):
@@ -792,7 +783,7 @@ def get_identification_report(task_id: str):
             focus_nodes = [x for x in focus_nodes if x and (x not in seen and not seen.add(x))]
 
             actions.append({
-                'priority': 'P0' if priority == 'P0' else 'P1',
+                'priority': 'P1',
                 'title': '针对桥接节点/割点进行“结构性阻断”以降低跨社区扩散',
                 'targets': {
                     'nodes': focus_nodes,
@@ -816,7 +807,7 @@ def get_identification_report(task_id: str):
         # P1：传播链路联动处置（高概率边）
         if prop_top_edges:
             actions.append({
-                'priority': 'P0' if priority == 'P0' else 'P1',
+                'priority': 'P1',
                 'title': '对传播预测中“高概率链路”两端节点进行联动处置',
                 'targets': {
                     'nodes': prop_nodes_focus,
@@ -840,7 +831,7 @@ def get_identification_report(task_id: str):
         # 最大连通分量占比高时的补充建议
         if isinstance(largest_comp_ratio, (int, float)) and largest_comp_ratio >= 0.8:
             actions.append({
-                'priority': 'P1' if priority == 'P0' else priority,
+                'priority': 'P1',
                 'title': '针对最大连通分量进行范围治理（集中干预）',
                 'targets': {
                     'component': 'largest',

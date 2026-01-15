@@ -152,6 +152,11 @@ export default {
 
     const destroy = () => {
       if (cy) {
+        try {
+          cy.removeAllListeners()
+        } catch (e) {
+          // ignore
+        }
         cy.destroy()
         cy = null
       }

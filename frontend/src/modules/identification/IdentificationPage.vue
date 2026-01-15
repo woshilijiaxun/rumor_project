@@ -283,6 +283,7 @@
                 <div class="prop-form-label">仿真次数</div>
                 <div class="prop-form-control">
                   <select v-model.number="propNumSimulations" class="form-control">
+                    <option :value="100">100</option>
                     <option :value="200">200</option>
                     <option :value="500">500</option>
                     <option :value="1000">1000</option>
@@ -600,7 +601,7 @@ export default {
     const propMode = ref('multi')
     const propK = ref(10)
     const propBeta = ref('')
-    const propNumSimulations = ref(500)
+    const propNumSimulations = ref(100)
     const propMaxSteps = ref(4)
     const edgeProbThreshold = ref(0)
     const topEdgesLimit = ref(200)

@@ -18,6 +18,24 @@
           placeholder="按文件名搜索..."
           class="search-input"
         />
+        <div class="batch-actions">
+          <label class="select-all">
+            <input
+              type="checkbox"
+              :checked="allSelected"
+              :disabled="filteredTasks.length === 0"
+              @change="toggleSelectAll"
+            />
+            <span>全选</span>
+          </label>
+          <button
+            class="batch-delete-btn"
+            :disabled="selectedTaskIds.length === 0 || deleting"
+            @click="batchDelete"
+          >
+            {{ deleting ? '删除中...' : `批量删除（${selectedTaskIds.length}）` }}
+          </button>
+        </div>
         <button @click="refreshTasks" class="refresh-btn">刷新</button>
       </div>
     </div>
@@ -38,6 +56,13 @@
 
       <div v-else class="tasks-list">
         <div v-for="task in filteredTasks" :key="task.task_id || task.id" class="task-item">
+          <div class="task-select">
+            <input
+              type="checkbox"
+              :checked="isTaskSelected(task)"
+              @change="toggleTask(task)"
+            />
+          </div>
           <div class="task-info">
             <div class="task-title">{{ getTaskTitle(task) }}</div>
             <div class="task-meta">
@@ -109,6 +134,8 @@ export default {
   emits: ['view-details', 'delete', 'page-change', 'refresh', 'set-user-filter'],
   setup(props, { emit }) {
     const searchKeyword = ref('')
+    const selectedTaskIds = ref([])
+    const deleting = ref(false)
 
     const filteredTasks = computed(() => {
       if (!searchKeyword.value) {
@@ -120,6 +147,80 @@ export default {
         return title.toLowerCase().includes(keyword)
       })
     })
+
+    const getTaskId = (task) => {
+      return String(task?.task_id || task?.id || '').trim()
+    }
+
+    const selectedIdSet = computed(() => new Set(selectedTaskIds.value.map(x => String(x))))
+
+    const isTaskSelected = (task) => {
+      const id = getTaskId(task)
+      if (!id) return false
+      return selectedIdSet.value.has(id)
+    }
+
+    const toggleTask = (task) => {
+      const id = getTaskId(task)
+      if (!id) return
+      const set = new Set(selectedTaskIds.value.map(x => String(x)))
+      if (set.has(id)) {
+        set.delete(id)
+      } else {
+        set.add(id)
+      }
+      selectedTaskIds.value = Array.from(set)
+    }
+
+    const allSelected = computed(() => {
+      if (!filteredTasks.value.length) return false
+      return filteredTasks.value.every(t => isTaskSelected(t))
+    })
+
+    const toggleSelectAll = () => {
+      if (allSelected.value) {
+        // 取消当前筛选列表的选择
+        const removeSet = new Set(filteredTasks.value.map(t => getTaskId(t)).filter(Boolean))
+        selectedTaskIds.value = selectedTaskIds.value.filter(id => !removeSet.has(String(id)))
+      } else {
+        // 选中当前筛选列表全部
+        const set = new Set(selectedTaskIds.value.map(x => String(x)))
+        filteredTasks.value.forEach(t => {
+          const id = getTaskId(t)
+          if (id) set.add(id)
+        })
+        selectedTaskIds.value = Array.from(set)
+      }
+    }
+
+    const batchDelete = async () => {
+      const ids = selectedTaskIds.value.map(x => String(x)).filter(Boolean)
+      if (ids.length === 0) return
+
+      if (!confirm(`确定要删除选中的 ${ids.length} 个任务吗？`)) return
+
+      deleting.value = true
+      try {
+        const results = await Promise.allSettled(ids.map(id => identificationService.deleteTask(id)))
+        const failed = results.filter(r => r.status === 'rejected')
+
+        // 成功的从选中列表移除
+        const succeededIds = results
+          .map((r, idx) => ({ r, id: ids[idx] }))
+          .filter(x => x.r.status === 'fulfilled')
+          .map(x => x.id)
+        const succeededSet = new Set(succeededIds)
+        selectedTaskIds.value = selectedTaskIds.value.filter(id => !succeededSet.has(String(id)))
+
+        if (failed.length > 0) {
+          alert(`已删除 ${ids.length - failed.length} 个，失败 ${failed.length} 个。可点击“刷新”重新加载。`)
+        }
+
+        emit('refresh')
+      } finally {
+        deleting.value = false
+      }
+    }
 
     const formatTime = (timestamp) => {
       if (!timestamp) return '-';
@@ -172,6 +273,13 @@ export default {
           return
         }
         await identificationService.deleteTask(taskId)
+
+        // 若该任务在“已选中”列表中，也同步移除
+        const idStr = String(taskId)
+        if (selectedIdSet.value.has(idStr)) {
+          selectedTaskIds.value = selectedTaskIds.value.filter(id => String(id) !== idStr)
+        }
+
         emit('refresh')
       } catch (e) {
         alert(e?.message || '删除失败，请稍后重试')
@@ -216,7 +324,15 @@ export default {
       previousPage,
       nextPage,
       updateUserFilter,
-      triggerRefresh
+      triggerRefresh,
+      // 多选相关
+      selectedTaskIds,
+      isTaskSelected,
+      toggleTask,
+      allSelected,
+      toggleSelectAll,
+      batchDelete,
+      deleting
     }
   }
 }
@@ -252,6 +368,48 @@ export default {
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.batch-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #374151;
+  user-select: none;
+}
+
+.select-all input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+.batch-delete-btn {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  background-color: #ef4444;
+  color: #fff;
+  transition: background-color 0.2s ease;
+}
+
+.batch-delete-btn:hover:not(:disabled) {
+  background-color: #dc2626;
+}
+
+.batch-delete-btn:disabled {
+  background-color: #fecaca;
+  cursor: not-allowed;
+  color: #7f1d1d;
 }
 
 .search-input {
