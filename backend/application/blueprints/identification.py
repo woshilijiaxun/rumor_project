@@ -457,7 +457,21 @@ def get_identification_report(task_id: str):
         # 输出：
         # - propagation.multi：Top-10 联合种子传播概率图
         # - propagation.single：每个 seed 单独传播概率图（默认取 Top-3，避免过慢）
-        propagation = None
+        # 确保报告输出结构稳定：即使传播计算失败，也返回可解释的空结构
+        propagation = {
+            'mode': 'auto',
+            'seeds': [],
+            'multi': {
+                'graph': {
+                    'nodes': [],
+                    'edges': [],
+                    'meta': {'nodes': 0, 'edges': 0},
+                },
+                'steps': [],
+                'max_steps': 0,
+                'error': None,
+            },
+        }
         try:
             k_prop = request.args.get('prop_k', default=10, type=int)
             k_prop = max(1, min(int(k_prop or 10), 50))
@@ -525,10 +539,52 @@ def get_identification_report(task_id: str):
                         'top_edges': max_edges_in_view,
                     }
 
+                # multi
+                multi_compact = _compact_prob_graph(multi_graph)
+
+                # steps：用于报告页按时间步展示传播路径（与 /identification/propagation 接口一致）
+                try:
+                    prop_max_steps = request.args.get('prop_max_steps', default=4, type=int)
+                    prop_max_steps = max(1, min(int(prop_max_steps or 4), 20))
+                except Exception:
+                    prop_max_steps = 4
+
+                steps = []
+                try:
+                    steps = simulator.calculate_propagation_steps(
+                        beta=beta,
+                        source_nodes=prop_seeds,
+                        num_simulations=num_simulations,
+                        max_steps=prop_max_steps,
+                    )
+                except Exception as _e_steps:
+                    # 不阻断报告生成
+                    steps = []
+
+                # 对齐 /identification/propagation 返回格式（报告页也按同一字段取数）
+                # - multi.probability_graph：原始传播概率图（可能是 map 或包含 edges/nodes 的对象）
+                # - multi.steps：时间步结果（用于可视化）
+                # 同时保留 compact 结果用于列表/摘要展示
                 propagation = {
-                    'mode': 'auto',
-                    'seeds': prop_seeds,
-                    'multi': _compact_prob_graph(multi_graph),
+                    'mode': 'multi',
+                    'task_id': t.task_id,
+                    'file_id': t.file_id,
+                    'k': k_prop,
+                    'beta': beta,
+                    'num_simulations': num_simulations,
+                    'source_nodes': prop_seeds,
+                    'multi': {
+                        'probability_graph': multi_graph,
+                        # 兼容 calculate_propagation_steps 可能返回 {"steps": [...]} 的情况
+                        'steps': (steps.get('steps') if isinstance(steps, dict) else steps) or [],
+                        'max_steps': prop_max_steps,
+                        # 兼容旧前端/现有 compact 字段
+                        'graph': multi_compact.get('graph'),
+                        'edges': multi_compact.get('edges'),
+                        'edge_threshold': multi_compact.get('edge_threshold'),
+                        'top_edges': multi_compact.get('top_edges'),
+                        'error': None,
+                    },
                 }
 
                 # single seeds：默认 Top-3
@@ -544,8 +600,12 @@ def get_identification_report(task_id: str):
                         )
                         single[str(seed)] = _compact_prob_graph(pg)
                     propagation['single'] = single
-        except Exception:
-            propagation = None
+        except Exception as _e_prop:
+            try:
+                current_app.logger.exception('报告传播预测生成失败: %s', _e_prop)
+            except Exception:
+                pass
+            propagation['multi']['error'] = str(_e_prop)
 
         # --- 治理建议（引入传播预测 + 桥接点/介数/割点） ---
         top10_ratio = (risk or {}).get('top10_ratio')

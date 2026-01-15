@@ -77,9 +77,40 @@
               </table>
             </div>
 
-            <div class="graph-block" v-if="sec.data?.propagation?.multi?.graph">
+            <div class="graph-block" v-if="sec.data?.propagation?.multi?.probability_graph || sec.data?.propagation?.multi?.graph?.graph || sec.data?.propagation?.multi?.graph">
               <div class="graph-title">潜在传播路径预测（multi：Top-10 联合种子）</div>
-              <GraphView :graph="sec.data.propagation.multi.graph" :highlight-map="highlightMap" :non-topk-gray="nonTopkGray" height="420px" />
+
+              <div v-if="propStepCards.length" class="prop-graph-scroll">
+                <div
+                  v-for="card in propStepCards"
+                  :key="card.t"
+                  class="prop-step-card"
+                >
+                  <div class="prop-step-title">t={{ card.t }}</div>
+                  <div class="prop-step-graph">
+                    <PropagationGraphView
+                      :base-graph="card.baseGraph"
+                      :overlay-edges="card.overlayEdges"
+                      :highlight-map="card.highlightMap"
+                      :roots="card.roots"
+                      :freeze-layout="true"
+                      height="360px"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <PropagationGraphView
+                v-else-if="propGraphForView"
+                :graph="propGraphForView"
+                :overlay-edges="propOverlayEdges"
+                :highlight-map="propHighlightMap"
+                :roots="propRoots"
+                :freeze-layout="true"
+                height="420px"
+              />
+
+              <div v-else class="empty-inline">暂无传播可视化数据</div>
             </div>
           </div>
 
@@ -213,11 +244,13 @@
 </template>
 
 <script>
+import { computed, ref, watch } from 'vue'
 import GraphView from './GraphView.vue'
+import PropagationGraphView from './PropagationGraphView.vue'
 
 export default {
   name: 'ReportAnalysis',
-  components: { GraphView },
+  components: { GraphView, PropagationGraphView },
   props: {
     report: { type: Object, default: null },
     loading: { type: Boolean, default: false },
@@ -226,7 +259,162 @@ export default {
     nonTopkGray: { type: Boolean, default: true },
   },
   emits: ['toggle-non-topk-gray'],
-  setup(_props, { emit }) {
+  setup(props, { emit }) {
+    /* ---------------- 传播可视化（报告页专用简化版） ---------------- */
+    const _getPropagationMulti = computed(() => {
+      const secs = Array.isArray(props.report?.sections) ? props.report.sections : []
+      const sec = secs.find(s => s?.id === 'key_nodes_and_propagation')
+      return sec?.data?.propagation?.multi || null
+    })
+
+    const propSteps = computed(() => {
+      const m = _getPropagationMulti.value
+      // 对齐后端 report（已按 /identification/propagation 补齐）：multi.steps
+      const steps = m?.steps ?? m?.graph?.steps ?? m?.graph?.graph?.steps
+      return Array.isArray(steps) ? steps : []
+    })
+
+    const propStepMaxT = computed(() => Math.max(0, propSteps.value.length - 1))
+    const propCurrentStep = ref(0)
+
+    watch(propSteps, () => { propCurrentStep.value = 0 })
+
+    // 辅助：构造 overlayEdges / highlightMap / roots，沿用识别页逻辑
+    const propOverlayEdges = computed(() => {
+      const steps = propSteps.value
+      if (!steps.length) return []
+      const edges = new Set()
+      // 累积展示：0..t
+      for (let i = 0; i <= propCurrentStep.value; i++) {
+        const es = Array.isArray(steps[i]?.edges) ? steps[i].edges : []
+        es.forEach(e => {
+          if (e?.source != null && e?.target != null) {
+            edges.add(`${e.source}|${e.target}`)
+          }
+        })
+      }
+      return Array.from(edges).map(k => {
+        const [s, t] = k.split('|')
+        return { source: s, target: t }
+      })
+    })
+
+    const propRoots = computed(() => {
+      const roots = Array.isArray(propSteps.value[0]?.nodes) ? propSteps.value[0].nodes : []
+      return roots.map(x => String(x))
+    })
+
+    const propHighlightMap = computed(() => {
+      const steps = propSteps.value
+      if (!steps.length) return {}
+      const t = Math.max(0, Math.min(propCurrentStep.value, propStepMaxT.value))
+
+      const seeds = new Set((steps[0]?.nodes || []).map(n => String(n)))
+      const currentNodes = new Set((steps[t]?.nodes || []).map(n => String(n)))
+      const prevNodes = new Set(t > 0 ? (steps[t-1]?.nodes || []).map(n => String(n)) : [])
+
+      const map = {}
+      seeds.forEach(n => { map[n] = '#ef4444' })
+      if (t > 0) {
+        currentNodes.forEach(n => {
+          if (!prevNodes.has(n) && !seeds.has(n)) map[n] = '#1677ff'
+        })
+      }
+      return map
+    })
+
+    const propStepCards = computed(() => {
+      const steps = propSteps.value
+      if (!steps.length) return []
+
+      const baseGraph = propGraphForView.value
+      if (!baseGraph) return []
+
+      const roots = Array.isArray(steps[0]?.nodes) ? steps[0].nodes.map(x => String(x)) : []
+
+      // 把每个时间步的 edges 转成 overlayEdges，并按时间步累积（0..t）
+      const stepEdges = steps.map((st) => {
+        const es = Array.isArray(st?.edges) ? st.edges : []
+        return es
+          .map(e => ({ source: String(e?.source), target: String(e?.target) }))
+          .filter(e => e.source && e.target)
+      })
+
+      const cards = []
+      for (let t = 0; t <= steps.length - 1; t++) {
+        // 激活节点：0..t 的 nodes 都高亮为红色（识别页卡片模式逻辑）
+        const activated = new Set()
+        for (let i = 0; i <= t; i++) {
+          const ns = Array.isArray(steps[i]?.nodes) ? steps[i].nodes : []
+          ns.forEach(n => activated.add(String(n)))
+        }
+
+        const highlightMap = {}
+        activated.forEach(id => { highlightMap[id] = '#ef4444' })
+
+        const overlayEdgeSet = new Set()
+        for (let i = 0; i <= t; i++) {
+          ;(stepEdges[i] || []).forEach(e => overlayEdgeSet.add(`${e.source}|${e.target}`))
+        }
+        const overlayEdges = Array.from(overlayEdgeSet).map(k => {
+          const [source, target] = k.split('|')
+          return { source, target }
+        })
+
+        cards.push({
+          t,
+          roots,
+          baseGraph,
+          overlayEdges,
+          highlightMap,
+        })
+      }
+
+      return cards
+    })
+
+    const propGraphForView = computed(() => {
+      // 报告页 propagation.multi 可能是：
+      // 1) { graph: {nodes,edges} }
+      // 2) { graph: { graph: {nodes,edges}, ... } }
+      // 3) { probability_graph: {"u|v": p, ...} } 或 { edges: [...] }
+      const m = _getPropagationMulti.value
+      if (!m) return null
+
+      const g = m.graph
+      const gg = (g && (g.graph || g)) || null
+      if (gg && Array.isArray(gg.nodes) && gg.nodes.length) return gg
+
+      // 兜底：用概率图（map/edges）构建一个最小可视化图
+      const pg = m.probability_graph || m.probabilityGraph || null
+      const rawEdges = Array.isArray(pg?.edges) ? pg.edges : (Array.isArray(pg?.links) ? pg.links : [])
+      const mapEdges = (pg && typeof pg === 'object' && !Array.isArray(pg) && !Array.isArray(pg?.edges) && !Array.isArray(pg?.links) && !Array.isArray(pg?.nodes))
+        ? Object.entries(pg)
+        : null
+
+      const edges = (mapEdges ? mapEdges.map(([k, v]) => {
+        const parts = String(k).split('|')
+        if (parts.length < 2) return null
+        const p = Number(v)
+        return { source: String(parts[0]), target: String(parts[1]), weight: Number.isFinite(p) ? p : 0 }
+      }) : rawEdges.map(e => {
+        const source = e?.source ?? e?.from ?? e?.u
+        const target = e?.target ?? e?.to ?? e?.v
+        const prob = e?.prob ?? e?.p ?? e?.probability ?? e?.value ?? e?.weight ?? e?.score
+        if (source == null || target == null) return null
+        const p = Number(prob)
+        return { source: String(source), target: String(target), weight: Number.isFinite(p) ? p : 0 }
+      })).filter(Boolean)
+
+      if (!edges.length) return null
+
+      const nodeSet = new Set()
+      edges.forEach(e => { nodeSet.add(e.source); nodeSet.add(e.target) })
+      const nodes = Array.from(nodeSet).map(id => ({ id, label: id }))
+
+      return { nodes, edges, meta: { nodes: nodes.length, edges: edges.length } }
+    })
+
     const formatRiskLevel = (level) => {
       if (level === 'high') return '高'
       if (level === 'medium') return '中'
@@ -251,7 +439,19 @@ export default {
       return arr.join(', ')
     }
 
-    return { formatRiskLevel, formatNumber, formatPercent, formatNeighbors }
+    return {
+      formatRiskLevel,
+      formatNumber,
+      formatPercent,
+      formatNeighbors,
+      propCurrentStep,
+      propStepMaxT,
+      propOverlayEdges,
+      propHighlightMap,
+      propRoots,
+      propGraphForView,
+      propStepCards,
+    }
   }
 }
 </script>
@@ -278,6 +478,66 @@ export default {
   font-weight: 700;
   color: #374151;
   margin: 0;
+}
+
+.step-controls {
+  margin: 8px 0 10px;
+}
+
+.step-slider {
+  width: 100%;
+}
+
+.edges-meta {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+.prop-graph-scroll {
+  width: 100%;
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  align-items: stretch;
+  scroll-snap-type: x mandatory;
+}
+
+.prop-graph-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.prop-graph-scroll::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 999px;
+}
+
+.prop-graph-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.prop-step-card {
+  flex: 0 0 320px;
+  max-width: 320px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+  scroll-snap-align: start;
+}
+
+.prop-step-title {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #111827;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.prop-step-graph {
+  position: relative;
 }
 
 .non-topk-toggle {
