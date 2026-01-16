@@ -7,6 +7,7 @@ from application.repositories.uploads_repo import (
     list_uploads as repo_list_uploads,
     get_upload_by_id as repo_get_upload_by_id,
     delete_upload as repo_delete_upload,
+    update_upload_original_name as repo_update_upload_original_name,
 )
 from application.services.audit_logs_service import write_log
 from application.services.audit_context import sanitize_detail
@@ -94,6 +95,34 @@ def list_uploads_paginated(page: int, page_size: int, current_user_id: int) -> D
 
 def get_upload_record(file_id: int) -> Optional[Dict]:
     return repo_get_upload_by_id(file_id)
+
+
+def rename_upload_original_name(
+    file_id: int,
+    new_original_name: str,
+    actor_user_id: Optional[int] = None,
+    actor_meta: Optional[Dict[str, Any]] = None,
+    context: Optional[Dict[str, Any]] = None,
+) -> Dict:
+    ctx = context or {}
+    repo_update_upload_original_name(file_id, new_original_name)
+    try:
+        write_log(
+            actor_user_id=actor_user_id,
+            action='FILE_RENAME',
+            target_type='upload',
+            target_id=str(file_id),
+            detail=sanitize_detail({
+                'result': 'success',
+                'request': {'new_original_name': new_original_name},
+                'extra': {**ctx, 'file_id': file_id},
+                'actor': actor_meta or {},
+            }),
+        )
+    except Exception:
+        pass
+    row = repo_get_upload_by_id(file_id)
+    return row or {'id': file_id, 'original_name': new_original_name}
 
 
 def delete_upload_record(

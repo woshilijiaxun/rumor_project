@@ -122,6 +122,66 @@ def inline_file(file_id: int):
         return fail("系统错误: " + str(e), http_code=500, status="error")
 
 
+@bp.route('/uploads/<int:file_id>/rename', methods=['POST'])
+@require_auth
+def rename_upload(file_id: int):
+    try:
+        row = uploads_service.get_upload_record(file_id)
+        if not row:
+            return fail("文件不存在", http_code=404)
+
+        # 权限：管理员可改任意；普通用户只能改自己
+        if (not is_admin()) and (int(row.get('user_id') or 0) != int(g.user['id'])):
+            return fail("无权限修改该文件", http_code=403)
+
+        data = request.get_json() or {}
+        new_name = (data.get('new_name') or data.get('original_name') or '').strip()
+        if not new_name:
+            return fail("缺少参数: new_name", http_code=400)
+
+        # 只允许 txt/csv，并保持原扩展名（防止改类型导致解析不一致）
+        old_original_name = row.get('original_name') or ''
+        _, old_ext = os.path.splitext(old_original_name)
+        old_ext = (old_ext or '').lower()
+
+        safe = secure_filename(new_name)
+        if not safe:
+            return fail("文件名不合法", http_code=400)
+
+        base, new_ext = os.path.splitext(safe)
+        new_ext = (new_ext or '').lower()
+
+        if old_ext and new_ext and new_ext != old_ext:
+            return fail("不允许修改文件扩展名", http_code=400)
+
+        if not new_ext and old_ext:
+            safe = base + old_ext
+
+        if not allowed_file(safe):
+            return fail("不支持的文件类型", http_code=400)
+
+        updated = uploads_service.rename_upload_original_name(
+            file_id=file_id,
+            new_original_name=safe,
+            actor_user_id=g.user.get('id'),
+            actor_meta={
+                'ip': request.remote_addr,
+                'user_agent': request.headers.get('User-Agent', ''),
+            },
+            context={
+                'by_admin': bool(is_admin()),
+                'old_original_name': row.get('original_name'),
+                'stored_name': row.get('stored_name'),
+            },
+        )
+
+        return ok({'file': updated}, message='重命名成功')
+    except Error as e:
+        return fail("数据库错误: " + str(e), http_code=500, status="error")
+    except Exception as e:
+        return fail("系统错误: " + str(e), http_code=500, status="error")
+
+
 @bp.route('/uploads/<int:file_id>', methods=['DELETE'])
 @require_auth
 def delete_upload(file_id: int):

@@ -888,7 +888,9 @@ def get_identification_report(task_id: str):
         if max_edges is not None and max_edges <= 0:
             max_edges = None
 
-        graph_obj = parse_graph_from_file(abs_path=abs_path, ext=ext, max_edges=max_edges)
+        is_multi_name = ('multi' in (str(original_name or '') + ' ' + str(stored_name or '')).lower())
+
+        graph_obj = parse_graph_from_file(abs_path=abs_path, ext=ext, max_edges=max_edges, force_multilayer=is_multi_name)
 
         # 构建 networkx 无向图（用于最大连通分量口径指标 / 桥接点等）
         G = nx.Graph()
@@ -1508,7 +1510,9 @@ def export_identification_report_html(task_id: str):
         if max_edges is not None and max_edges <= 0:
             max_edges = None
 
-        graph_obj = parse_graph_from_file(abs_path=abs_path, ext=ext, max_edges=max_edges)
+        is_multi_name = ('multi' in (str(original_name or '') + ' ' + str(stored_name or '')).lower())
+
+        graph_obj = parse_graph_from_file(abs_path=abs_path, ext=ext, max_edges=max_edges, force_multilayer=is_multi_name)
 
         # 构建 networkx 无向图
         G = nx.Graph()

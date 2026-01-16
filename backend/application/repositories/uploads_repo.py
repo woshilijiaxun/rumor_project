@@ -78,6 +78,20 @@ def get_upload_by_id(file_id: int) -> Optional[Dict]:
         conn.close()
 
 
+def update_upload_original_name(file_id: int, original_name: str) -> None:
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE uploads SET original_name=%s WHERE id=%s", (original_name, file_id))
+        conn.commit()
+    finally:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        conn.close()
+
+
 def delete_upload(file_id: int) -> None:
     conn = get_db_connection()
     try:
@@ -90,4 +104,3 @@ def delete_upload(file_id: int) -> None:
         except Exception:
             pass
         conn.close()
-

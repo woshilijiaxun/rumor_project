@@ -95,7 +95,7 @@ def MGNN_AL(Gs):
     """
     # 加载预训练模型
    
-    model_path = "backend/application/algorithms/my_algo_module/MGNN_AL/mgnn-al_model.pth"
+    model_path = "application/algorithms/my_algo_module/MGNN_AL/mgnn-al_model.pth"
     # 模型配置（与保存的 state_dict 匹配）
     num_heads = 8  # 每层的 head 数
     num_layer = 3  # GAT 层数

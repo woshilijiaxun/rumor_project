@@ -69,6 +69,7 @@
           <td class="ops">
             <a href="javascript:void(0)" @click="previewFile(f)">预览</a>
             <a href="javascript:void(0)" @click="downloadFile(f)">下载</a>
+            <a v-if="canRename(f)" href="javascript:void(0)" @click="openRename(f)">重命名</a>
             <a v-if="canDelete(f)" href="javascript:void(0)" @click="removeFile(f)">删除</a>
           </td>
         </tr>
@@ -141,6 +142,22 @@
         </div>
       </div>
     </div>
+
+    <!-- 重命名弹窗 -->
+    <div v-if="renameVisible" class="modal-mask" @click.self="closeRename">
+      <div class="modal-container">
+        <h3 class="modal-title">重命名文件</h3>
+        <div class="form-row">
+          <label>新文件名</label>
+          <input v-model="renameName" type="text" class="search-input" placeholder="请输入新文件名（保持原扩展名）" :disabled="renaming" />
+        </div>
+        <div v-if="renameError" class="form-error">{{ renameError }}</div>
+        <div class="actions">
+          <button @click="closeRename" :disabled="renaming">取消</button>
+          <button class="primary" @click="doRename" :disabled="renaming">{{ renaming ? '提交中...' : '确定' }}</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -168,7 +185,13 @@ export default {
       uploadedCount: 0, failedCount: 0,
       uploadVisibility: 'private',
       currentUserId: null,
-      isAdmin: false
+      isAdmin: false,
+
+      renameVisible: false,
+      renameTarget: null,
+      renameName: '',
+      renameError: '',
+      renaming: false
     }
   },
   computed: {
@@ -214,6 +237,9 @@ export default {
       if (!f) return false
       if (this.currentUserId == null) return false
       return Number(f.user_id) === Number(this.currentUserId)
+    },
+    canRename(f) {
+      return this.canDelete(f)
     },
     formatUploader(userId) {
       if (userId == null) return '-'
@@ -262,6 +288,43 @@ export default {
         if (res.data?.status === 'success') this.fetchFiles()
         else alert(res.data?.message || '删除失败')
       }).catch(err => { alert(err.response?.data?.message || err.message || '删除失败') })
+    },
+
+    openRename(f) {
+      this.renameTarget = f
+      this.renameName = f?.original_name || ''
+      this.renameError = ''
+      this.renameVisible = true
+    },
+    closeRename() {
+      this.renameVisible = false
+      this.renameTarget = null
+      this.renameName = ''
+      this.renameError = ''
+      this.renaming = false
+    },
+    doRename() {
+      const f = this.renameTarget
+      if (!f) return
+      const name = (this.renameName || '').trim()
+      if (!name) {
+        this.renameError = '请输入文件名'
+        return
+      }
+      this.renaming = true
+      this.renameError = ''
+      axios.post(`/api/uploads/${f.id}/rename`, { new_name: name }).then(res => {
+        if (res.data?.status === 'success') {
+          this.closeRename()
+          this.fetchFiles()
+        } else {
+          this.renameError = res.data?.message || '重命名失败'
+        }
+        this.renaming = false
+      }).catch(err => {
+        this.renameError = err.response?.data?.message || err.message || '重命名失败'
+        this.renaming = false
+      })
     },
     openUpload() {
       this.uploadVisible = true
