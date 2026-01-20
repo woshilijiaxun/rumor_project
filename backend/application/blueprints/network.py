@@ -37,7 +37,44 @@ def get_network_graph():
             return fail('无权限访问该文件', http_code=403)
 
         force = request.args.get('force', default=0, type=int)
-        graph_version = 'v1'
+
+        def _split_first_data_line(line: str):
+            # 允许空格/逗号/制表符/分号分隔
+            import re
+            splitter = re.compile(r"[\s,\t;]+")
+            parts = [p for p in splitter.split((line or '').strip()) if p]
+            return parts
+
+        # 构造文件绝对路径（先拿到路径用于内容自动检测）
+        stored_name = row['stored_name']
+        original_name = row.get('original_name') or stored_name
+
+        abs_path = os.path.join(current_app.config['UPLOAD_FOLDER'], stored_name)
+
+        # 自动检测：
+        # - 第一行（非空/非注释）只有 2 列 => 单层（source target）
+        # - 第一行（非空/非注释）有 4 列 => 多层（layer source target weight）
+        # 其他情况默认按单层处理（更保守）
+        is_multilayer = False
+        try:
+            with open(abs_path, 'r', encoding='utf-8') as f:
+                for raw in f:
+                    line = (raw or '').strip()
+                    if (not line) or line.startswith('#'):
+                        continue
+                    parts = _split_first_data_line(line)
+                    if len(parts) == 4:
+                        is_multilayer = True
+                    elif len(parts) == 2:
+                        is_multilayer = False
+                    else:
+                        is_multilayer = False
+                    break
+        except Exception:
+            is_multilayer = False
+
+        # 缓存版本需要包含“单层/多层”判定，否则同一文件可能命中错误缓存
+        graph_version = 'v2-auto-multilayer' if is_multilayer else 'v2-auto-singlelayer'
 
         # 文件级缓存（拓扑只由文件决定）
         if not force:
@@ -82,7 +119,12 @@ def get_network_graph():
         # 构造文件绝对路径
         abs_path = os.path.join(current_app.config['UPLOAD_FOLDER'], stored_name)
 
-        graph = parse_graph_from_file(abs_path=abs_path, ext=ext, max_edges=max_edges)
+        graph = parse_graph_from_file(
+            abs_path=abs_path,
+            ext=ext,
+            max_edges=max_edges,
+            force_multilayer=is_multilayer,
+        )
 
         # 写入缓存（失败不影响返回）
         try:

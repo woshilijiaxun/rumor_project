@@ -18,7 +18,7 @@ class GATv3(nn.Module):
 
         self.in_dim,self.out_dim ,self.embed_dim, self.bias,self.dropout,self.heads = GATv3_P["in_dim"], GATv3_P["out_dim"], GATv3_P["embed_dim"], GATv3_P["bias"],GATv3_P["dropout"], GATv3_P['heads']
         self.layer = nn.ModuleList()
-        self.layer.append(GATv2Conv(self.in_dim,32,num_heads = self.heads[0],bias = self.bias,activation = None,negative_slope=0.2,attn_drop=0.0))
+        self.layer.append(GATv2Conv(self.in_dim,32,num_heads = self.heads[0],bias = self.bias,activation = None,negative_slope=0.2,attn_drop=0.0, allow_zero_in_degree=True))
         for i in range(1,self.K-1):
             self.layer.append(GATv2Conv(32*self.heads[i-1],32,num_heads = self.heads[i],bias = self.bias,activation = None,attn_drop= 0.0))
         self.layer.append(GATv2Conv(32*self.heads[-2],32, num_heads = self.heads[-1],bias = self.bias,activation = None,attn_drop= 0.0))

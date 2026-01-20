@@ -1,11 +1,12 @@
-import argparse
+#!/usr/bin/env python3
 import re
 from collections import defaultdict, deque
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
-
-EDGE_RE = re.compile(r"\['(?P<uid>[^']+)'\s*,\s*'(?P<tid>[^']+)'\s*,\s*'(?P<delay>[^']+)'\]\s*->\s*\['(?P<uid2>[^']+)'\s*,\s*'(?P<tid2>[^']+)'\s*,\s*'(?P<delay2>[^']+)'\]")
+EDGE_RE = re.compile(
+    r"\['(?P<uid>[^']+)'\s*,\s*'(?P<tid>[^']+)'\s*,\s*'(?P<delay>[^']+)'\]\s*->\s*\['(?P<uid2>[^']+)'\s*,\s*'(?P<tid2>[^']+)'\s*,\s*'(?P<delay2>[^']+)'\]"
+)
 
 
 def parse_user_edge(line: str) -> Optional[Tuple[int, int]]:
@@ -16,209 +17,161 @@ def parse_user_edge(line: str) -> Optional[Tuple[int, int]]:
     if not m:
         return None
     try:
-        u1 = int(m.group('uid'))
-        u2 = int(m.group('uid2'))
-    except Exception:
+        u1 = int(m.group("uid"))
+        u2 = int(m.group("uid2"))
+    except (ValueError, TypeError):
         return None
     if u1 == u2:
         return None
-    return u1, u2
+    return (u1, u2) if u1 < u2 else (u2, u1)
 
 
 def iter_tree_files(dataset_dir: Path):
-    tree_dir = dataset_dir / 'tree'
+    tree_dir = dataset_dir / "tree"
     if not tree_dir.is_dir():
         return
     for p in sorted(tree_dir.iterdir()):
-        if p.is_file() and p.suffix == '.txt':
+        if p.is_file() and p.suffix == ".txt":
             yield p
 
 
-def read_user_edges(root: Path, datasets: List[str], dedup: bool) -> Dict[str, List[Tuple[int, int]]]:
-    """Return edges for layer1 and layer2.
+def read_undirected_edges(dataset_dir: Path, progress_every: int = 0, debug_samples: int = 0) -> Set[Tuple[int, int]]:
+    edges: Set[Tuple[int, int]] = set()
 
-    - layer1: user-user edges from propagation
-    - layer2: user-user edges from the same propagation (direction ignored)
+    tree_dir = dataset_dir / "tree"
+    if not dataset_dir.is_dir():
+        raise SystemExit(f"dataset_dir 不存在或不是目录: {dataset_dir}")
+    if not tree_dir.is_dir():
+        raise SystemExit(f"tree 目录不存在: {tree_dir}")
 
-    Both layers share the same node domain (user_id) to satisfy "nodes correspond".
+    tree_files = sorted([p for p in tree_dir.iterdir() if p.is_file() and p.suffix == ".txt"])
+    if not tree_files:
+        raise SystemExit(f"tree 目录下没有 .txt 文件: {tree_dir}")
 
-    Currently both layers are identical by definition. If you later decide a different
-    layer2 semantics, extend here.
-    """
+    print(f"[info] dataset_dir={dataset_dir.resolve()}", flush=True)
+    print(f"[info] tree_dir={tree_dir.resolve()}", flush=True)
+    print(f"[info] tree_files={len(tree_files)}", flush=True)
 
-    edges_by_layer: Dict[str, List[Tuple[int, int]]] = {'1': [], '2': []}
-    seen1: Set[Tuple[int, int]] = set() if dedup else set()
-    seen2: Set[Tuple[int, int]] = set() if dedup else set()
-
-    for ds in datasets:
-        ds_dir = root / ds
-        if not ds_dir.is_dir():
-            raise SystemExit(f"Dataset dir not found: {ds_dir}")
-        for tree_file in iter_tree_files(ds_dir):
-            with tree_file.open('r', encoding='utf-8', errors='replace') as f:
+    sample_seen = 0
+    for idx, tree_file in enumerate(tree_files, 1):
+        with tree_file.open("r", encoding="utf-8", errors="replace") as f:
                 for line in f:
-                    e = parse_user_edge(line)
-                    if not e:
-                        continue
-                    a, b = e
-                    # undirected canonical key
-                    if a > b:
-                        a, b = b, a
+                if debug_samples > 0 and sample_seen < debug_samples:
+                    sample_seen += 1
+                    ok = bool(EDGE_RE.search(line.strip()))
+                    print(
+                        f"[debug] sample from {tree_file.name}: matched={ok} line={line.strip()[:200]}",
+                        flush=True,
+                    )
 
-                    k = (a, b)
-                    if dedup:
-                        if k not in seen1:
-                            seen1.add(k)
-                            edges_by_layer['1'].append(k)
-                        if k not in seen2:
-                            seen2.add(k)
-                            edges_by_layer['2'].append(k)
-                    else:
-                        edges_by_layer['1'].append(k)
-                        edges_by_layer['2'].append(k)
+                edge = parse_user_edge(line)
+                if edge:
+                    edges.add(edge)
 
-    return edges_by_layer
+        if progress_every > 0 and (idx % progress_every == 0 or idx == len(tree_files)):
+            print(f"[progress] {idx}/{len(tree_files)} files processed, edges={len(edges)}", flush=True)
+
+    return edges
 
 
-def build_adj(edges: Iterable[Tuple[int, int]]) -> Dict[int, List[int]]:
+def build_adjacency_list(edges: Set[Tuple[int, int]]) -> Dict[int, List[int]]:
     adj: Dict[int, List[int]] = defaultdict(list)
-    for a, b in edges:
-        adj[a].append(b)
-        adj[b].append(a)
+    for u, v in edges:
+        adj[u].append(v)
+        adj[v].append(u)
     return adj
 
 
-def largest_connected_component_nodes(adj: Dict[int, List[int]]) -> Set[int]:
-    seen: Set[int] = set()
-    best: Set[int] = set()
+def find_largest_connected_component(adj: Dict[int, List[int]]) -> Set[int]:
+    visited: Set[int] = set()
+    largest_component: Set[int] = set()
 
-    for start in adj.keys():
-        if start in seen:
+    for node in adj:
+        if node in visited:
             continue
-        q = deque([start])
-        seen.add(start)
-        comp: Set[int] = {start}
-        while q:
-            u = q.popleft()
-            for v in adj.get(u, []):
-                if v not in seen:
-                    seen.add(v)
-                    comp.add(v)
-                    q.append(v)
-        if len(comp) > len(best):
-            best = comp
 
-    return best
+        component: Set[int] = set()
+        queue: deque[int] = deque([node])
+        visited.add(node)
 
+        while queue:
+            current = queue.popleft()
+            component.add(current)
+            for neighbor in adj.get(current, []):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
 
-def bfs_subgraph_nodes(adj: Dict[int, List[int]], seed: int, target_nodes: int) -> Set[int]:
-    visited: Set[int] = {seed}
-    q: deque[int] = deque([seed])
-    while q and len(visited) < target_nodes:
-        u = q.popleft()
-        for v in adj.get(u, []):
-            if v not in visited:
-                visited.add(v)
-                q.append(v)
-                if len(visited) >= target_nodes:
-                    break
-    return visited
+        if len(component) > len(largest_component):
+            largest_component = component
+
+    return largest_component
 
 
-def induced_edges(edges: List[Tuple[int, int]], nodes: Set[int], max_edges: int) -> List[Tuple[int, int]]:
-    out: List[Tuple[int, int]] = []
-    for a, b in edges:
-        if a in nodes and b in nodes:
-            out.append((a, b))
-            if max_edges > 0 and len(out) >= max_edges:
-                break
-    return out
+def filter_edges_by_nodes(edges: Set[Tuple[int, int]], nodes: Set[int]) -> List[Tuple[int, int]]:
+    return [(u, v) for u, v in edges if u in nodes and v in nodes]
 
 
-def stats_edges(edges: List[Tuple[int, int]]) -> Tuple[int, int]:
-    nodes: Set[int] = set()
-    for a, b in edges:
-        nodes.add(a)
-        nodes.add(b)
-    return len(nodes), len(edges)
-
-
-def write_single(path: Path, edges: List[Tuple[int, int]]):
-    with path.open('w', encoding='utf-8') as f:
-        for a, b in edges:
-            f.write(f"{a} {b}\n")
-
-
-def write_multi(path: Path, edges1: List[Tuple[int, int]], edges2: List[Tuple[int, int]]):
-    with path.open('w', encoding='utf-8') as f:
-        for a, b in edges1:
-            f.write(f"1 {a} {b} 1\n")
-        for a, b in edges2:
-            f.write(f"2 {a} {b} 1\n")
+def write_edge_list(output_path: Path, edges: List[Tuple[int, int]]):
+    with output_path.open("w", encoding="utf-8") as f:
+        for u, v in sorted(edges):
+            f.write(f"{u} {v}\n")
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Convert rumor_detection_acl2017 trees into connected single/multilayer networks (user_id domain).')
-    ap.add_argument('--root', default='rumor_detection_acl2017', help='Path to rumor_detection_acl2017 directory')
-    ap.add_argument('--datasets', default='twitter15,twitter16', help='Comma-separated dataset names to include')
-    ap.add_argument('--out-dir', default='flaskProject/output_networks', help='Directory to write output files')
-    ap.add_argument('--dedup', action='store_true', help='Deduplicate edges')
-    ap.add_argument('--target-nodes', type=int, default=2000, help='Target number of nodes in output connected graph (best effort)')
-    ap.add_argument('--max-edges', type=int, default=8000, help='Max edges to write per output (best effort)')
-    ap.add_argument('--strict', action='store_true', help='Fail if cannot reach target-nodes with connectivity constraint')
+    import argparse
 
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(
+        description="Convert rumor_detection_acl2017 trees into an undirected user graph (LCC only)."
+    )
+    parser.add_argument(
+        "--dataset-dir",
+        type=Path,
+        default="rumor_detection_acl2017/twitter15",
+        help="Path to dataset directory (e.g., rumor_detection_acl2017/twitter15)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default="twitter15_LCC_edgelist.txt",
+        help="Output file path for the edge list",
+    )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=20,
+        help="Print progress every N tree files (0 to disable)",
+    )
+    parser.add_argument(
+        "--debug-samples",
+        type=int,
+        default=0,
+        help="Print first N raw lines with regex match result (for debugging)",
+    )
 
-    root = Path(args.root)
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    args = parser.parse_args()
 
-    datasets = [x.strip() for x in args.datasets.split(',') if x.strip()]
+    print("[info] script started", flush=True)
 
-    edges_by_layer = read_user_edges(root, datasets, dedup=bool(args.dedup))
+    edges = read_undirected_edges(
+        args.dataset_dir, progress_every=args.progress_every, debug_samples=args.debug_samples
+    )
+    print(f"[info] unique undirected edges={len(edges)}", flush=True)
 
-    # layer 1 will define the node set, because "nodes correspond" across layers
-    edges1_all = edges_by_layer['1']
-    edges2_all = edges_by_layer['2']
+    adj = build_adjacency_list(edges)
+    print(f"[info] unique nodes(with degree>0)={len(adj)}", flush=True)
 
-    adj1 = build_adj(edges1_all)
-    lcc_nodes = largest_connected_component_nodes(adj1)
+    lcc_nodes = find_largest_connected_component(adj)
+    print(f"[info] LCC nodes={len(lcc_nodes)}", flush=True)
 
-    if not lcc_nodes:
-        raise SystemExit('No edges parsed. Please check tree file format.')
+    lcc_edges = filter_edges_by_nodes(edges, lcc_nodes)
+    print(f"[info] LCC edges={len(lcc_edges)}", flush=True)
 
-    if len(lcc_nodes) < args.target_nodes:
-        msg = f"最大连通子图只有 {len(lcc_nodes)} 个 user 节点，无法达到 target_nodes={args.target_nodes}。"
-        if args.strict:
-            raise SystemExit(msg)
-        else:
-            print('WARN:', msg)
-
-    # Take a connected subset from LCC
-    seed = next(iter(lcc_nodes))
-    nodes_sel = bfs_subgraph_nodes(build_adj(induced_edges(edges1_all, lcc_nodes, max_edges=0)), seed, min(args.target_nodes, len(lcc_nodes)))
-
-    edges1_sel = induced_edges(edges1_all, nodes_sel, max_edges=args.max_edges)
-    edges2_sel = induced_edges(edges2_all, nodes_sel, max_edges=args.max_edges)
-
-    # Sanity: no isolated nodes in written graph -> ensured by using only endpoints in edges
-    n1, m1 = stats_edges(edges1_sel)
-    n2, m2 = stats_edges(edges2_sel)
-
-    out_single = out_dir / 'single_user_edgelist.txt'
-    out_multi = out_dir / 'multilayer_user_edgelist.txt'
-
-    write_single(out_single, edges1_sel)
-    write_multi(out_multi, edges1_sel, edges2_sel)
-
-    print('OK')
-    print('single:', out_single)
-    print(f'  nodes={n1} edges={m1} connected=YES (by construction)')
-    print('multi :', out_multi)
-    print(f'  layer1 nodes={n1} edges={m1}')
-    print(f'  layer2 nodes={n2} edges={m2}')
-    print('  nodes aligned across layers: YES (user_id domain + same nodes_sel)')
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    write_edge_list(args.output, lcc_edges)
+    print(f"[info] wrote: {args.output.resolve()}", flush=True)
+    print("[info] Done!", flush=True)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

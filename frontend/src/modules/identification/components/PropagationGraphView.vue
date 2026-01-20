@@ -73,12 +73,25 @@ export default {
       return [...nodes, ...edges]
     }
 
-    const runLayoutAndFit = () => {
+    let layoutRunId = 0
+    const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0))
+
+    const runLayoutAndFit = async () => {
       if (!cy) return
-        const layout = cy.layout({
+
+      const runId = ++layoutRunId
+
+      // 先让出一个 tick，保证返回按钮/路由跳转等交互优先被处理
+      await yieldToMain()
+      if (runId !== layoutRunId || !cy) return
+
+      const layout = cy.layout({
         name: 'fcose',
         animate: false,
-        randomize: true,
+        // 为了让“同一份图数据”在不同卡片/不同时间步渲染时拓扑位置保持一致，
+        // freezeLayout=true 时关闭 randomize，并固定 randomSeed。
+        randomize: !props.freezeLayout,
+        randomSeed: 7,
         fit: true,
         padding: FIT_PADDING,
         quality: 'default',
@@ -88,7 +101,10 @@ export default {
         edgeElasticity: () => 0.2,
         gravity: 0.25
       })
+
       layout.run()
+      if (runId !== layoutRunId || !cy) return
+
       cy.fit(undefined, FIT_PADDING)
     }
 
@@ -151,6 +167,9 @@ export default {
     }
 
     const destroy = () => {
+      // 标记：中断后续布局/fit 等操作
+      layoutRunId++
+
       if (cy) {
         try {
           cy.removeAllListeners()

@@ -2,4 +2,5 @@ venv/
 .venv/
 __pycache__/
 *.pyc
-@rumor_detection_acl2017/
+
+rumor_detection_acl2017/

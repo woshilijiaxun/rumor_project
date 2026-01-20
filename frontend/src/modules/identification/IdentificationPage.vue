@@ -141,7 +141,20 @@
                   <span v-if="visualData?.graph?.meta?.truncated" class="warning">已截断至 {{ visualData?.graph?.meta?.max_edges }} 条边</span>
                 </div>
               </div>
-              <GraphView v-if="visualData?.graph" :graph="visualData.graph" :highlight-map="topKHighlightMap" :non-topk-gray="nonTopKGray" height="480px" />
+              <GraphView3D
+                v-if="visualData?.graph?.type === 'multilayer'"
+                :graph="visualData.graph"
+                :highlight-map="topKHighlightMap"
+                :non-topk-gray="nonTopKGray"
+                height="480px"
+              />
+              <GraphView
+                v-else-if="visualData?.graph"
+                :graph="visualData.graph"
+                :highlight-map="topKHighlightMap"
+                :non-topk-gray="nonTopKGray"
+                height="480px"
+              />
               <div class="action-buttons">
                 <button class="btn btn-secondary" @click="clearVisualization">清空</button>
               </div>
@@ -372,7 +385,17 @@
                 >
                   <div class="prop-step-title">t={{ card.t }}</div>
                   <div class="prop-step-graph">
+                    <GraphView3D
+                      v-if="card.isMultilayer"
+                      :graph="card.baseGraph"
+                      :highlight-map="card.highlightMap"
+                      :overlay-edges="card.overlayEdges"
+                      :non-topk-gray="true"
+                      :layer-gap="900"
+                      height="360px"
+                    />
                     <PropagationGraphView
+                      v-else
                       :base-graph="card.baseGraph"
                       :overlay-edges="card.overlayEdges"
                       :highlight-map="card.highlightMap"
@@ -505,6 +528,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import axios from 'axios'
 import GraphView from './components/GraphView.vue'
+import GraphView3D from './components/GraphView3D.vue'
 import PropagationGraphView from './components/PropagationGraphView.vue'
 import ErrorModal from './components/ErrorModal.vue'
 import TaskHistoryModal from './components/TaskHistoryModal.vue'
@@ -582,7 +606,7 @@ const buildGraphFromPropagation = (payload, { edgeProbThreshold = 0, topEdgesLim
 
 export default {
   name: 'IdentificationPage',
-  components: { GraphView, PropagationGraphView, ErrorModal, TaskHistoryModal },
+  components: { GraphView, GraphView3D, PropagationGraphView, ErrorModal, TaskHistoryModal },
   setup() {
     const router = useRouter()
 
@@ -865,8 +889,24 @@ export default {
     // 左侧图 Top-K 高亮映射：key=nodeId(String)，value=颜色（与右侧“重要程度”一致）
     // 严格按 nodeId 精确匹配：只有图中存在该节点 id 才会染色；否则忽略，避免乱染。
     const graphNodeIdSet = computed(() => {
-      const nodes = visualData.value?.graph?.nodes || []
+      const g = visualData.value?.graph
       const set = new Set()
+
+      // 多层图：GraphView3D 以 rawId 作为高亮匹配 key
+      if (g?.type === 'multilayer' && Array.isArray(g?.layers)) {
+        g.layers.forEach(layer => {
+          const ns = Array.isArray(layer?.nodes) ? layer.nodes : []
+          ns.forEach(n => {
+            const id = n?.id
+            if (id == null) return
+            set.add(String(id))
+          })
+        })
+        return set
+      }
+
+      // 单层图：GraphView 以 node.id 作为高亮匹配 key
+      const nodes = g?.nodes || []
       nodes.forEach(n => set.add(String(n.id)))
       return set
     })
@@ -1512,6 +1552,25 @@ export default {
 
           if (payload?.steps && typeof payload.steps === 'object') {
             stepsPayload.value = payload.steps
+
+            // 缓存：供报告页直接复用（避免重复计算导致结果不一致）
+            try {
+              const cacheKey = `ident_prop_cache::${String(taskId)}::multi::k=${String(propK.value)}::beta=${String(propBeta.value || '')}::num=${String(propNumSimulations.value)}::steps=${String(propMaxSteps.value)}`
+              const cacheVal = {
+                saved_at: Date.now(),
+                task_id: String(taskId),
+                mode: 'multi',
+                k: Number(propK.value),
+                beta: String(propBeta.value || ''),
+                num_simulations: Number(propNumSimulations.value),
+                max_steps: Number(propMaxSteps.value),
+                steps: stepsPayload.value,
+              }
+              sessionStorage.setItem(cacheKey, JSON.stringify(cacheVal))
+              sessionStorage.setItem(`ident_prop_cache_last_key::${String(taskId)}::multi`, cacheKey)
+            } catch (e) {
+              // ignore
+            }
           }
         } else {
           const rawGraphs = payload?.probability_graphs
@@ -1830,7 +1889,8 @@ export default {
 
       // 底图来源选 C：使用原始网络拓扑（左侧“可视化网络”返回的 visualData.graph）
       // 若尚未加载 visualData，则退化为基于传播 steps 构造的图
-      const baseGraph = visualData.value?.graph || _buildGraphForStep(steps, showMax)
+      const isMultilayer = visualData.value?.graph?.type === 'multilayer'
+      const baseGraph = isMultilayer ? (visualData.value?.graph || null) : (visualData.value?.graph || _buildGraphForStep(steps, showMax))
 
       // 用于从 steps 汇总传播边（按时间步累积）
       const stepEdges = steps.map((st) => {
@@ -1874,6 +1934,7 @@ export default {
         cards.push({
           t,
           roots,
+          isMultilayer,
           baseGraph,
           overlayEdges,
           highlightMap,

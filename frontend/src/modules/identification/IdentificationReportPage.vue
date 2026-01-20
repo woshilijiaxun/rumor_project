@@ -11,7 +11,7 @@
       <div class="header-row">
         <div>
           <h1>智能报告</h1>
-          <p class="subtitle">任务：{{ taskId }}</p>
+          <p class="subtitle">任务：{{ taskId }}<span v-if="algorithmLabel"> ｜ 方法：{{ algorithmLabel }}</span></p>
         </div>
         <div class="header-actions-right">
           <button class="back-btn refresh-btn" type="button" @click="reload">刷新</button>
@@ -26,11 +26,13 @@
         <div class="report-section">
           <h2>智能报告分析</h2>
           <ReportAnalysis
+            :task-id="taskId"
             :report="report"
             :loading="reportLoading"
             :error="reportError"
             :highlight-map="highlightMap"
             :non-topk-gray="nonTopkGray"
+            :visual-graph="visualGraph"
             @toggle-non-topk-gray="toggleNonTopkGray"
           />
         </div>
@@ -41,10 +43,11 @@
 
 <script>
 import { ref, onMounted, computed } from 'vue'
+import { identificationService } from './services/identificationService'
 import { useRoute, useRouter } from 'vue-router'
+import axios from 'axios'
 import ErrorModal from './components/ErrorModal.vue'
 import ReportAnalysis from './components/ReportAnalysis.vue'
-import { identificationService } from './services/identificationService'
 
 export default {
   name: 'IdentificationReportPage',
@@ -55,9 +58,36 @@ export default {
 
     const taskId = String(route.params.taskId || '').trim()
 
+    const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001/api'
+    const token = (typeof window !== 'undefined') ? localStorage.getItem('token') : ''
+
     const reportLoading = ref(false)
     const reportError = ref('')
     const report = ref(null)
+
+    const algorithmLabel = computed(() => {
+      const r = report.value
+      if (!r) return ''
+      return String(
+        r.algorithm_name ||
+        r.algorithmName ||
+        r.algorithm_key ||
+        r.algorithmKey ||
+        r.algo_key ||
+        r.algoKey ||
+        r.meta?.algorithm_name ||
+        r.meta?.algorithmName ||
+        r.meta?.algorithm_key ||
+        r.meta?.algorithmKey ||
+        r.meta?.algo_key ||
+        r.meta?.algoKey ||
+        ''
+      ).trim()
+    })
+
+    const visualGraph = ref(null)
+    const visualGraphLoading = ref(false)
+    const visualGraphError = ref('')
 
     // 报告页默认：非Top-K置灰（与识别计算页一致）
     const nonTopkGray = ref(true)
@@ -147,8 +177,42 @@ export default {
       }
     }
 
+    const loadVisualGraph = async () => {
+      if (!taskId) return
+
+      const secs = Array.isArray(report.value?.sections) ? report.value.sections : []
+      const sec = secs.find(s => s?.id === 'network_overview')
+      const fileId = sec?.data?.file?.id ?? sec?.data?.file?.file_id ?? sec?.data?.file_id
+
+      const fid = fileId != null ? String(fileId) : ''
+      if (!fid) {
+        visualGraph.value = null
+        return
+      }
+
+      visualGraphLoading.value = true
+      visualGraphError.value = ''
+      try {
+        const res = await axios.get(`${apiBaseUrl}/network/graph`, {
+          params: { file_id: fid, max_edges: 10000 },
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        })
+        if (res.data?.status === 'success') {
+          visualGraph.value = res.data?.data?.graph || null
+        } else {
+          throw new Error(res.data?.message || '网络拓扑加载失败')
+        }
+      } catch (e) {
+        visualGraphError.value = e?.response?.data?.message || e?.message || '网络拓扑加载失败'
+        visualGraph.value = null
+      } finally {
+        visualGraphLoading.value = false
+      }
+    }
+
     const reload = async () => {
       await loadReport({ top_n: 20, max_edges: 200000 })
+      await loadVisualGraph()
     }
 
     const reportExporting = ref(false)
@@ -200,6 +264,7 @@ export default {
         return
       }
       await loadReport({ top_n: 20, max_edges: 200000 })
+      await loadVisualGraph()
     })
 
     return {
@@ -210,6 +275,8 @@ export default {
       nonTopkGray,
       highlightMap,
       toggleNonTopkGray,
+      visualGraph,
+      algorithmLabel,
       reload,
       exportReport,
       reportExporting,

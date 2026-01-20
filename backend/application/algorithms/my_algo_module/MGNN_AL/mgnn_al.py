@@ -6,6 +6,7 @@
 
 import networkx as nx
 import dgl
+from dgl import add_self_loop
 import torch
 import torch.nn as nn
 import numpy as np
@@ -95,7 +96,9 @@ def MGNN_AL(Gs):
     """
     # 加载预训练模型
    
-    model_path = "application/algorithms/my_algo_module/MGNN_AL/mgnn-al_model.pth"
+    # 使用基于当前文件目录的绝对路径，避免因启动目录(cwd)不同导致找不到模型文件
+    _base_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(_base_dir, "mgnn-al_model.pth")
     # 模型配置（与保存的 state_dict 匹配）
     num_heads = 8  # 每层的 head 数
     num_layer = 3  # GAT 层数
@@ -168,7 +171,10 @@ def MGNN_AL(Gs):
 
         relabeled_layers.append(g_full)
         node_features_list.append(get_dgl_g_input_test(g_full))
-        dgl_graphs.append(dgl.from_networkx(g_full))
+        dg = dgl.from_networkx(g_full)
+        # DGL 的 GAT 系列对 0-in-degree 节点会报错；加 self-loop 可保证每个节点至少有 1 条入边
+        dg = add_self_loop(dg)
+        dgl_graphs.append(dg)
 
     
 

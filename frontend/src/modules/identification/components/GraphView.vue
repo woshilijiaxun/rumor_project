@@ -30,15 +30,84 @@ export default {
     let cy = null
 
     const FIT_PADDING = 60
+    const LAYER_GAP = 160
 
     // 记录“初始展示”的视角（pan/zoom）。
     // 这里的“初始”指：首次布局完成并 fit 之后的视角。
     let initialViewport = null
 
-    const hasData = computed(() => Array.isArray(props.graph?.nodes) && props.graph.nodes.length > 0)
+    const hasData = computed(() => {
+      if (props.graph?.type === 'multilayer') {
+        return Array.isArray(props.graph?.layers) && props.graph.layers.length > 0
+      }
+      return Array.isArray(props.graph?.nodes) && props.graph.nodes.length > 0
+    })
 
     const buildElements = (g) => {
       const highlight = props.highlightMap || {}
+
+      // 多层：把每一层当作一个“分区”(layer band)，用 y 固定到不同带上来形成“自上而下”的分层效果。
+      // 规则：layer_id 越小越靠上（y 越小），层间距由 LAYER_GAP 控制。
+      if (g?.type === 'multilayer' && Array.isArray(g.layers)) {
+        const layers = g.layers
+          .slice()
+          .sort((a, b) => {
+            const av = Number(a?.layer_id)
+            const bv = Number(b?.layer_id)
+            if (Number.isFinite(av) && Number.isFinite(bv)) return av - bv
+            return String(a?.layer_id ?? '').localeCompare(String(b?.layer_id ?? ''))
+          })
+
+        const nodeKeySet = new Set()
+        const nodes = []
+        const edges = []
+
+        layers.forEach((layer, idx) => {
+          const layerId = String(layer?.layer_id ?? '')
+          const rawNodes = Array.isArray(layer?.nodes) ? layer.nodes : []
+          rawNodes.forEach(n => {
+            const rawId = String(n?.id)
+            if (!rawId) return
+            const id = `${layerId}::${rawId}`
+            if (nodeKeySet.has(id)) return
+            nodeKeySet.add(id)
+
+            const color = highlight[rawId]
+            nodes.push({
+              data: {
+                id,
+                label: String(n?.label ?? rawId),
+                highlightColor: color || '',
+                rawId,
+                layerId,
+                layerIndex: idx,
+              },
+              classes: color ? 'topk' : (props.nonTopkGray ? 'not-topk' : 'not-topk-blue')
+            })
+          })
+
+          const rawEdges = Array.isArray(layer?.edges) ? layer.edges : []
+          rawEdges.forEach(e => {
+            const s = e?.source
+            const t = e?.target
+            if (s == null || t == null) return
+            const source = `${layerId}::${String(s)}`
+            const target = `${layerId}::${String(t)}`
+            edges.push({
+              data: {
+                source,
+                target,
+                label: e?.weight != null ? String(e.weight) : '',
+                layerId,
+              }
+            })
+          })
+        })
+
+        return [...nodes, ...edges]
+      }
+
+      // 单层（原逻辑）
       const nodes = (g.nodes || []).map(n => {
         const id = String(n.id)
         const color = highlight[id]
@@ -51,14 +120,99 @@ export default {
       return [...nodes, ...edges]
     }
 
-    const runLayoutAndFit = () => {
+    const _sortedLayerIds = () => {
+      const layers = Array.isArray(props.graph?.layers) ? props.graph.layers : []
+      return layers
+        .slice()
+        .sort((a, b) => {
+          const av = Number(a?.layer_id)
+          const bv = Number(b?.layer_id)
+          if (Number.isFinite(av) && Number.isFinite(bv)) return av - bv
+          return String(a?.layer_id ?? '').localeCompare(String(b?.layer_id ?? ''))
+        })
+        .map(l => String(l?.layer_id ?? ''))
+    }
+
+    const _applyLayerBandsTopDown = () => {
       if (!cy) return
+      const ids = _sortedLayerIds()
+      if (!ids.length) return
+
+      // y 越小越靠上：第一层(最小 layer_id)放最上
+      ids.forEach((layerId, idx) => {
+        const targetY = idx * LAYER_GAP
+        cy.nodes(`[layerId = "${layerId}"]`).forEach(n => {
+          const p = n.position()
+          n.position({ x: p.x, y: targetY })
+        })
+      })
+
+      // 整体上移，让第一层贴近顶部（居中看起来更“上到下”）
+      const bb = cy.elements().boundingBox()
+      const shiftY = bb.y1 - FIT_PADDING
+      if (Number.isFinite(shiftY) && shiftY !== 0) {
+        cy.nodes().forEach(n => {
+          const p = n.position()
+          n.position({ x: p.x, y: p.y - shiftY })
+        })
+      }
+    }
+
+    let layoutRunId = 0
+    const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0))
+
+    const runLayoutAndFit = async () => {
+      if (!cy) return
+
+      const runId = ++layoutRunId
+
+      // 先让出一个 tick，保证返回按钮/路由跳转能先被处理
+      await yieldToMain()
+      if (runId !== layoutRunId || !cy) return
+
+      // 多层：先在全图上跑一次 fcose（保证层内形状合理），然后强制压到层带（自上而下）
+      if (props.graph?.type === 'multilayer' && Array.isArray(props.graph.layers)) {
+        const layout = cy.layout({
+          name: 'fcose',
+          animate: false,
+          randomize: true,
+          fit: false,
+          padding: FIT_PADDING,
+          quality: 'default',
+          nodeSeparation: 80,
+          nodeRepulsion: 6000,
+          idealEdgeLength: 150,
+          edgeElasticity: 0.2,
+          gravity: 0.25,
+        })
+
+        layout.run()
+        if (runId !== layoutRunId || !cy) return
+
+        _applyLayerBandsTopDown()
+        if (runId !== layoutRunId || !cy) return
+
+        cy.fit(undefined, FIT_PADDING)
+        return
+      }
+
+      // 单层（原逻辑）
       const layout = cy.layout({
-        name: 'fcose', animate: false, randomize: true, fit: true, padding: FIT_PADDING,
-        quality: 'default', nodeSeparation: 80, nodeRepulsion: () => 6000, idealEdgeLength: () => 150,
-        edgeElasticity: () => 0.2, gravity: 0.25
+        name: 'fcose',
+        animate: false,
+        randomize: true,
+        fit: true,
+        padding: FIT_PADDING,
+        quality: 'default',
+        nodeSeparation: 80,
+        nodeRepulsion: 6000,
+        idealEdgeLength: 150,
+        edgeElasticity: 0.2,
+        gravity: 0.25
       })
       layout.run()
+      if (runId !== layoutRunId || !cy) return
+
       cy.fit(undefined, FIT_PADDING)
     }
 
@@ -121,6 +275,9 @@ export default {
     }
 
     const destroy = () => {
+      // 标记：中断后续布局/fit 等操作
+      layoutRunId++
+
       if (cy) {
         try {
           cy.removeAllListeners()

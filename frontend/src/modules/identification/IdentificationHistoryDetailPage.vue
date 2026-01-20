@@ -92,8 +92,15 @@
                 </div>
               </div>
 
+              <GraphView3D
+                v-if="visualData?.graph?.type === 'multilayer'"
+                :graph="visualData.graph"
+                :highlight-map="highlightMap"
+                :non-topk-gray="nonTopkGray"
+                height="480px"
+              />
               <GraphView
-                v-if="visualData?.graph"
+                v-else-if="visualData?.graph"
                 :graph="visualData.graph"
                 :highlight-map="highlightMap"
                 :non-topk-gray="nonTopkGray"
@@ -203,13 +210,14 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import GraphView from './components/GraphView.vue'
+import GraphView3D from './components/GraphView3D.vue'
 import ErrorModal from './components/ErrorModal.vue'
 
 import { identificationService } from './services/identificationService'
 
 export default {
   name: 'IdentificationHistoryDetailPage',
-  components: { GraphView, ErrorModal },
+  components: { GraphView, GraphView3D, ErrorModal },
   setup() {
     const route = useRoute()
     const router = useRouter()
@@ -282,8 +290,24 @@ export default {
     // 颜色规则：按 output 在 Top-K 内做归一化，从红->橙/黄 的渐变
     // 左侧图 Top-K 高亮映射：与主页面一致，使用“重要程度”颜色
     const graphNodeIdSet = computed(() => {
-      const nodes = visualData.value?.graph?.nodes || []
+      const g = visualData.value?.graph
       const set = new Set()
+
+      // 多层图：GraphView3D 以 rawId 作为高亮匹配 key
+      if (g?.type === 'multilayer' && Array.isArray(g?.layers)) {
+        g.layers.forEach(layer => {
+          const ns = Array.isArray(layer?.nodes) ? layer.nodes : []
+          ns.forEach(n => {
+            const id = n?.id
+            if (id == null) return
+            set.add(String(id))
+          })
+        })
+        return set
+      }
+
+      // 单层图
+      const nodes = g?.nodes || []
       nodes.forEach(n => set.add(String(n.id)))
       return set
     })

@@ -34,7 +34,7 @@
               <div class="kv"><div class="k">平均聚类系数（最大连通分量）</div><div class="v">{{ formatNumber(sec.data?.metrics?.largest_component_metrics?.avg_clustering, 4) }}</div></div>
             </div>
 
-            <div class="graph-block" v-if="sec.data?.graph">
+            <div class="graph-block" v-if="visualGraph">
               <div class="graph-title-row">
                 <div class="graph-title">网络拓扑图</div>
                 <button
@@ -47,9 +47,36 @@
                   <span class="toggle-dot" :class="{ on: nonTopkGray }"></span>
                   <span class="toggle-text">非Top-K{{ nonTopkGray ? '置灰' : '蓝色' }}</span>
                 </button>
+
+                <button
+                  v-if="!showNetworkGraph"
+                  class="non-topk-toggle"
+                  type="button"
+                  @click="showNetworkGraph = true"
+                  title="点击后开始渲染网络拓扑图"
+                >
+                  可视化
+                </button>
               </div>
-              <GraphView :graph="sec.data.graph" :highlight-map="highlightMap" :non-topk-gray="nonTopkGray" height="420px" />
+
+              <div v-if="!showNetworkGraph" class="empty-inline">点击右上角“可视化”开始加载…</div>
+
+              <GraphView3D
+                v-else-if="visualGraph?.type === 'multilayer'"
+                :graph="visualGraph"
+                :highlight-map="highlightMap"
+                :non-topk-gray="nonTopkGray"
+                height="420px"
+              />
+              <GraphView
+                v-else
+                :graph="visualGraph"
+                :highlight-map="highlightMap"
+                :non-topk-gray="nonTopkGray"
+                height="420px"
+              />
             </div>
+            <div v-else class="empty-inline">网络拓扑加载中...</div>
           </div>
 
           <!-- 关键节点与传播路径 -->
@@ -77,10 +104,16 @@
               </table>
             </div>
 
-            <div class="graph-block" v-if="sec.data?.propagation?.multi?.probability_graph || sec.data?.propagation?.multi?.graph?.graph || sec.data?.propagation?.multi?.graph">
+            <div class="graph-block">
               <div class="graph-title">潜在传播路径预测（multi：Top-10 联合种子）</div>
 
-              <div v-if="propStepCards.length" class="prop-graph-scroll">
+              <div v-if="propLoading" class="empty-inline">传播路径计算中...</div>
+              <div v-else-if="propError" class="empty-inline">{{ propError }}</div>
+
+              <div
+                v-else-if="effectivePropSteps.length"
+                class="prop-graph-scroll"
+              >
                 <div
                   v-for="card in propStepCards"
                   :key="card.t"
@@ -88,27 +121,41 @@
                 >
                   <div class="prop-step-title">t={{ card.t }}</div>
                   <div class="prop-step-graph">
-                    <PropagationGraphView
-                      :base-graph="card.baseGraph"
-                      :overlay-edges="card.overlayEdges"
-                      :highlight-map="card.highlightMap"
-                      :roots="card.roots"
-                      :freeze-layout="true"
-                      height="360px"
-                    />
+                    <div class="prop-step-graph-inner">
+                      <div v-if="!showPropagationGraphs && !enabledPropCard[String(card.t)]" class="empty-inline">
+                        <button
+                          class="non-topk-toggle"
+                          type="button"
+                          @click="enablePropagationGraph(card.t)"
+                          title="点击后开始渲染此时间步的传播可视化"
+                        >
+                          可视化
+                        </button>
+                        <span style="margin-left:8px;">点击后加载该卡片…</span>
+                      </div>
+
+                      <GraphView3D
+                        v-else-if="card.isMultilayer"
+                        :graph="card.baseGraph"
+                        :highlight-map="card.highlightMap"
+                        :overlay-edges="card.overlayEdges"
+                        :non-topk-gray="true"
+                        :layer-gap="900"
+                        height="360px"
+                      />
+                      <PropagationGraphView
+                        v-else
+                        :base-graph="card.baseGraph"
+                        :overlay-edges="card.overlayEdges"
+                        :highlight-map="card.highlightMap"
+                        :roots="card.roots"
+                        :freeze-layout="true"
+                        height="360px"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
-
-              <PropagationGraphView
-                v-else-if="propGraphForView"
-                :graph="propGraphForView"
-                :overlay-edges="propOverlayEdges"
-                :highlight-map="propHighlightMap"
-                :roots="propRoots"
-                :freeze-layout="true"
-                height="420px"
-              />
 
               <div v-else class="empty-inline">暂无传播可视化数据</div>
             </div>
@@ -246,93 +293,121 @@
 <script>
 import { computed, ref, watch } from 'vue'
 import GraphView from './GraphView.vue'
+import GraphView3D from './GraphView3D.vue'
 import PropagationGraphView from './PropagationGraphView.vue'
+import { identificationService } from '../services/identificationService'
 
 export default {
   name: 'ReportAnalysis',
-  components: { GraphView, PropagationGraphView },
+  components: { GraphView, GraphView3D, PropagationGraphView },
   props: {
+    taskId: { type: String, default: '' },
     report: { type: Object, default: null },
     loading: { type: Boolean, default: false },
     error: { type: String, default: '' },
     highlightMap: { type: Object, default: () => ({}) },
     nonTopkGray: { type: Boolean, default: true },
+    visualGraph: { type: Object, default: null },
   },
   emits: ['toggle-non-topk-gray'],
   setup(props) {
-    /* ---------------- 传播可视化（报告页专用简化版） ---------------- */
-    const _getPropagationMulti = computed(() => {
-      const secs = Array.isArray(props.report?.sections) ? props.report.sections : []
-      const sec = secs.find(s => s?.id === 'key_nodes_and_propagation')
-      return sec?.data?.propagation?.multi || null
+    const propLoading = ref(false)
+    const propError = ref('')
+    const realtimePropSteps = ref([])
+
+    const showNetworkGraph = ref(false)
+    const showPropagationGraphs = ref(false)
+    const enabledPropCard = ref({})
+
+    const enablePropagationGraph = (t) => {
+      enabledPropCard.value = {
+        ...enabledPropCard.value,
+        [String(t)]: true,
+      }
+    }
+
+    const enableAllPropagationGraphs = () => {
+      showPropagationGraphs.value = true
+    }
+
+    const taskId = computed(() => {
+      const fromProp = String(props.taskId || '').trim()
+      if (fromProp) return fromProp
+      const tid = props.report?.task_id || props.report?.taskId || props.report?.meta?.task_id
+      return tid != null ? String(tid) : ''
     })
 
-    const propSteps = computed(() => {
-      const m = _getPropagationMulti.value
-      // 对齐后端 report（已按 /identification/propagation 补齐）：multi.steps
+    const fetchRealtimePropagation = async () => {
+      const tid = taskId.value
+      if (!tid) return
+
+      // 先尝试从识别计算页写入的 sessionStorage 缓存中复用（方案A：同一次会话内跳转）
+      try {
+        const lastKey = sessionStorage.getItem(`ident_prop_cache_last_key::${String(tid)}::multi`)
+        if (lastKey) {
+          const raw = sessionStorage.getItem(lastKey)
+          const parsed = raw ? JSON.parse(raw) : null
+          const steps = parsed?.steps
+          if (Array.isArray(steps) && steps.length) {
+            realtimePropSteps.value = steps
+            propError.value = ''
+            return
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      propLoading.value = true
+      propError.value = ''
+      try {
+        const res = await identificationService.propagation({
+          task_id: tid,
+          mode: 'multi',
+          k: 10,
+          num_simulations: 5,
+          max_steps: 4,
+          return_steps: true,
+        })
+
+        // 兼容返回结构：payload.steps 或 payload.steps.steps
+        const steps = res?.data?.steps ?? res?.data?.steps?.steps
+        realtimePropSteps.value = Array.isArray(steps) ? steps : []
+      } catch (e) {
+        propError.value = e?.message || '传播路径计算失败'
+        realtimePropSteps.value = []
+      } finally {
+        propLoading.value = false
+      }
+    }
+
+    watch(taskId, (v) => {
+      if (v) fetchRealtimePropagation()
+    }, { immediate: true })
+
+    /* ---------------- 传播可视化（报告页专用） ---------------- */
+    const effectivePropSteps = computed(() => {
+      if (realtimePropSteps.value.length) return realtimePropSteps.value
+
+      const secs = Array.isArray(props.report?.sections) ? props.report.sections : []
+      const sec = secs.find(s => s?.id === 'key_nodes_and_propagation')
+      const m = sec?.data?.propagation?.multi || null
       const steps = m?.steps ?? m?.graph?.steps ?? m?.graph?.graph?.steps
       return Array.isArray(steps) ? steps : []
     })
 
-    const propStepMaxT = computed(() => Math.max(0, propSteps.value.length - 1))
-    const propCurrentStep = ref(0)
-
-    watch(propSteps, () => { propCurrentStep.value = 0 })
-
-    // 辅助：构造 overlayEdges / highlightMap / roots，沿用识别页逻辑
-    const propOverlayEdges = computed(() => {
-      const steps = propSteps.value
-      if (!steps.length) return []
-      const edges = new Set()
-      // 累积展示：0..t
-      for (let i = 0; i <= propCurrentStep.value; i++) {
-        const es = Array.isArray(steps[i]?.edges) ? steps[i].edges : []
-        es.forEach(e => {
-          if (e?.source != null && e?.target != null) {
-            edges.add(`${e.source}|${e.target}`)
-          }
-        })
-      }
-      return Array.from(edges).map(k => {
-        const [s, t] = k.split('|')
-        return { source: s, target: t }
-      })
-    })
-
-    const propRoots = computed(() => {
-      const roots = Array.isArray(propSteps.value[0]?.nodes) ? propSteps.value[0].nodes : []
-      return roots.map(x => String(x))
-    })
-
-    const propHighlightMap = computed(() => {
-      const steps = propSteps.value
-      if (!steps.length) return {}
-      const t = Math.max(0, Math.min(propCurrentStep.value, propStepMaxT.value))
-
-      const seeds = new Set((steps[0]?.nodes || []).map(n => String(n)))
-      const currentNodes = new Set((steps[t]?.nodes || []).map(n => String(n)))
-      const prevNodes = new Set(t > 0 ? (steps[t-1]?.nodes || []).map(n => String(n)) : [])
-
-      const map = {}
-      seeds.forEach(n => { map[n] = '#ef4444' })
-      if (t > 0) {
-        currentNodes.forEach(n => {
-          if (!prevNodes.has(n) && !seeds.has(n)) map[n] = '#1677ff'
-        })
-      }
-      return map
-    })
-
     const propStepCards = computed(() => {
-      const steps = propSteps.value
+      const steps = effectivePropSteps.value
       if (!steps.length) return []
 
-      const baseGraph = propGraphForView.value
+      const edgeDisplayMode = 'cumulative'
+
+      const isMultilayer = props.visualGraph?.type === 'multilayer'
+      const baseGraph = isMultilayer ? (props.visualGraph || null) : (props.visualGraph || null)
       if (!baseGraph) return []
 
       const roots = Array.isArray(steps[0]?.nodes) ? steps[0].nodes.map(x => String(x)) : []
 
-      // 把每个时间步的 edges 转成 overlayEdges，并按时间步累积（0..t）
       const stepEdges = steps.map((st) => {
         const es = Array.isArray(st?.edges) ? st.edges : []
         return es
@@ -342,7 +417,6 @@ export default {
 
       const cards = []
       for (let t = 0; t <= steps.length - 1; t++) {
-        // 激活节点：0..t 的 nodes 都高亮为红色（识别页卡片模式逻辑）
         const activated = new Set()
         for (let i = 0; i <= t; i++) {
           const ns = Array.isArray(steps[i]?.nodes) ? steps[i].nodes : []
@@ -353,9 +427,14 @@ export default {
         activated.forEach(id => { highlightMap[id] = '#ef4444' })
 
         const overlayEdgeSet = new Set()
-        for (let i = 0; i <= t; i++) {
-          ;(stepEdges[i] || []).forEach(e => overlayEdgeSet.add(`${e.source}|${e.target}`))
+        if (edgeDisplayMode === 'current') {
+          ;(stepEdges[t] || []).forEach(e => overlayEdgeSet.add(`${e.source}|${e.target}`))
+        } else {
+          for (let i = 0; i <= t; i++) {
+            ;(stepEdges[i] || []).forEach(e => overlayEdgeSet.add(`${e.source}|${e.target}`))
+          }
         }
+
         const overlayEdges = Array.from(overlayEdgeSet).map(k => {
           const [source, target] = k.split('|')
           return { source, target }
@@ -364,6 +443,7 @@ export default {
         cards.push({
           t,
           roots,
+          isMultilayer,
           baseGraph,
           overlayEdges,
           highlightMap,
@@ -371,48 +451,6 @@ export default {
       }
 
       return cards
-    })
-
-    const propGraphForView = computed(() => {
-      // 报告页 propagation.multi 可能是：
-      // 1) { graph: {nodes,edges} }
-      // 2) { graph: { graph: {nodes,edges}, ... } }
-      // 3) { probability_graph: {"u|v": p, ...} } 或 { edges: [...] }
-      const m = _getPropagationMulti.value
-      if (!m) return null
-
-      const g = m.graph
-      const gg = (g && (g.graph || g)) || null
-      if (gg && Array.isArray(gg.nodes) && gg.nodes.length) return gg
-
-      // 兜底：用概率图（map/edges）构建一个最小可视化图
-      const pg = m.probability_graph || m.probabilityGraph || null
-      const rawEdges = Array.isArray(pg?.edges) ? pg.edges : (Array.isArray(pg?.links) ? pg.links : [])
-      const mapEdges = (pg && typeof pg === 'object' && !Array.isArray(pg) && !Array.isArray(pg?.edges) && !Array.isArray(pg?.links) && !Array.isArray(pg?.nodes))
-        ? Object.entries(pg)
-        : null
-
-      const edges = (mapEdges ? mapEdges.map(([k, v]) => {
-        const parts = String(k).split('|')
-        if (parts.length < 2) return null
-        const p = Number(v)
-        return { source: String(parts[0]), target: String(parts[1]), weight: Number.isFinite(p) ? p : 0 }
-      }) : rawEdges.map(e => {
-        const source = e?.source ?? e?.from ?? e?.u
-        const target = e?.target ?? e?.to ?? e?.v
-        const prob = e?.prob ?? e?.p ?? e?.probability ?? e?.value ?? e?.weight ?? e?.score
-        if (source == null || target == null) return null
-        const p = Number(prob)
-        return { source: String(source), target: String(target), weight: Number.isFinite(p) ? p : 0 }
-      })).filter(Boolean)
-
-      if (!edges.length) return null
-
-      const nodeSet = new Set()
-      edges.forEach(e => { nodeSet.add(e.source); nodeSet.add(e.target) })
-      const nodes = Array.from(nodeSet).map(id => ({ id, label: id }))
-
-      return { nodes, edges, meta: { nodes: nodes.length, edges: edges.length } }
     })
 
     const formatRiskLevel = (level) => {
@@ -467,6 +505,7 @@ export default {
       return arr.join(', ')
     }
 
+
     return {
       formatRiskLevel,
       formatPriority,
@@ -474,13 +513,16 @@ export default {
       formatNumber,
       formatPercent,
       formatNeighbors,
-      propCurrentStep,
-      propStepMaxT,
-      propOverlayEdges,
-      propHighlightMap,
-      propRoots,
-      propGraphForView,
       propStepCards,
+      effectivePropSteps,
+      propLoading,
+      propError,
+
+      showNetworkGraph,
+      showPropagationGraphs,
+      enabledPropCard,
+      enablePropagationGraph,
+      enableAllPropagationGraphs,
     }
   }
 }
