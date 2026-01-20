@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 
 rumor_detection_acl2017/
+node_modules/
