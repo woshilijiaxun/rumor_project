@@ -9,7 +9,6 @@ import dgl
 from dgl import add_self_loop
 import torch
 import torch.nn as nn
-import numpy as np
 import time
 import copy
 import os
@@ -46,16 +45,18 @@ def load_multilayer_graph(path):
 def get_dgl_g_input_test(G0):
     """为DGL图生成节点特征"""
     G = copy.deepcopy(G0)
-    input_features = torch.ones(len(G), 5)
+    input_features = torch.ones(len(G), 5, dtype=torch.float32)
     for i in G.nodes():
-        neighbors = list(G.neighbors(i))
-        input_features[i, 0] = G.degree[i]
+        # 兼容 numpy.int64 节点ID，统一转为 Python int
+        i = int(i)
+        neighbors = [int(n) for n in G.neighbors(i)]
+        input_features[i, 0] = float(G.degree[i])
         if neighbors:
-            input_features[i, 1] = sum(G.degree[j] for j in neighbors) / len(neighbors)
-            input_features[i, 2] = sum(nx.clustering(G, j) for j in neighbors) / len(neighbors)
+            input_features[i, 1] = float(sum(G.degree[j] for j in neighbors) / len(neighbors))
+            input_features[i, 2] = float(sum(nx.clustering(G, j) for j in neighbors) / len(neighbors))
         else:
-            input_features[i, 1] = 0
-            input_features[i, 2] = 0
+            input_features[i, 1] = 0.0
+            input_features[i, 2] = 0.0
 
     try:
         e = nx.eigenvector_centrality(G, max_iter=10000)
@@ -64,8 +65,9 @@ def get_dgl_g_input_test(G0):
         
     k = nx.core_number(G)
     for i in G.nodes():
-        input_features[i, 3] = e.get(i, 0)
-        input_features[i, 4] = k.get(i, 0)
+        i = int(i)
+        input_features[i, 3] = float(e.get(i, 0.0))
+        input_features[i, 4] = float(k.get(i, 0.0))
 
     for i in range(input_features.shape[1]):
         max_val = torch.max(input_features[:, i])
@@ -77,6 +79,31 @@ def get_dgl_g_input_test(G0):
 # ==============================================================================
 # Section 2: MGNN-AL（推理版，无SIR/无主动学习）
 # ==============================================================================
+
+def _sanitize_nx_graph(g: nx.Graph) -> nx.Graph:
+    """将节点/边ID强制规范为 Python int，避免 numpy.int64 进入 torch/dgl。"""
+    g2 = nx.Graph()
+    for n in g.nodes():
+        g2.add_node(int(n))
+    for u, v, data in g.edges(data=True):
+        u_i, v_i = int(u), int(v)
+        if data is None:
+            g2.add_edge(u_i, v_i)
+        else:
+            safe_data = {}
+            for k, val in data.items():
+                # 常见数值类型统一为 Python 标量
+                if hasattr(val, "item"):
+                    try:
+                        safe_data[k] = val.item()
+                        continue
+                    except Exception:
+                        pass
+                safe_data[k] = val
+            g2.add_edge(u_i, v_i, **safe_data)
+    g2.remove_edges_from(nx.selfloop_edges(g2))
+    return g2
+
 
 def MGNN_AL(Gs):
     """\
@@ -129,14 +156,18 @@ def MGNN_AL(Gs):
     
     
     # 加载 state_dict
-    state_dict = torch.load(model_path)
+    state_dict = torch.load(model_path, map_location=torch.device("cpu"))
     model.load_state_dict(state_dict)
     
 
     if isinstance(Gs, nx.Graph):
         Gs = [Gs]
+
     if not isinstance(Gs, (list, tuple)) or len(Gs) == 0:
         raise ValueError("Gs 必须是 nx.Graph 或非空的 list[nx.Graph]")
+
+    # 入口即做一次彻底类型清洗，避免 numpy.int64 混入后续 torch/dgl
+    Gs = [_sanitize_nx_graph(g) for g in Gs]
 
     total_layers = len(Gs)
     stime = time.time()
@@ -144,12 +175,13 @@ def MGNN_AL(Gs):
     # 统一节点ID空间：用“并集节点集”作为全局节点集合
     all_nodes = set()
     for g in Gs:
-        all_nodes.update(list(g.nodes()))
+        # 统一为 Python int，避免 numpy.int64 参与后续 torch/dgl 流程
+        all_nodes.update(int(n) for n in g.nodes())
     all_nodes = sorted(all_nodes)
     nodes_num = len(all_nodes)
 
-    global_id = {node: idx for idx, node in enumerate(all_nodes)}
-    global_rev = {idx: node for node, idx in global_id.items()}
+    global_id = {int(node): idx for idx, node in enumerate(all_nodes)}
+    global_rev = {idx: int(node) for node, idx in global_id.items()}
 
     # 逐层转换为 0..N-1 的一致编号，并提取特征
     relabeled_layers = []
@@ -171,7 +203,20 @@ def MGNN_AL(Gs):
 
         relabeled_layers.append(g_full)
         node_features_list.append(get_dgl_g_input_test(g_full))
-        dg = dgl.from_networkx(g_full)
+
+        # 显式使用 int64 张量构图，避免 dgl.from_networkx 在 numpy.int64 上推断失败
+        edges = list(g_full.edges())
+        if len(edges) == 0:
+            src = torch.empty(0, dtype=torch.int64)
+            dst = torch.empty(0, dtype=torch.int64)
+        else:
+            src = torch.as_tensor([int(u) for u, _ in edges], dtype=torch.int64)
+            dst = torch.as_tensor([int(v) for _, v in edges], dtype=torch.int64)
+        dg = dgl.graph((src, dst), num_nodes=int(nodes_num))
+
+        # 无向图补全反向边
+        dg = dgl.to_bidirected(dg, copy_ndata=False)
+
         # DGL 的 GAT 系列对 0-in-degree 节点会报错；加 self-loop 可保证每个节点至少有 1 条入边
         dg = add_self_loop(dg)
         dgl_graphs.append(dg)
