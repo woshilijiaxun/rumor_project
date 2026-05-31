@@ -68,21 +68,31 @@ def cal_hgc(G: nx.Graph) -> Dict[int, float]:
         return ED_dict
 
     def SH(G):
-        num = nx.number_of_nodes(G)
-        A = np.array(nx.adjacency_matrix(G, nodelist=range(0, num)).todense())
-        A = A / A.sum(axis=0).reshape(-1, 1)
-        C = []
-        count = 0
-        for i in range(A.shape[0]):
+        # 重要：网络节点标签可能不是 0..n-1 连续整数（例如你的 uid 是大整数）。
+        # 因此必须使用真实的节点列表作为 nodelist，并且返回的键也要是真实节点 id，
+        # 否则会触发：Node 0 in nodelist is not in G，且后续 sh[node] 会取不到。
+        nodelist = list(G.nodes())
+        num = len(nodelist)
+
+        A = np.array(nx.adjacency_matrix(G, nodelist=nodelist).todense(), dtype=float)
+
+        # 归一化：按列求和；如果某列全为 0（理论上孤立点），避免除以 0
+        col_sums = A.sum(axis=0)
+        col_sums[col_sums == 0] = 1.0
+        A = A / col_sums.reshape(-1, 1)
+
+        out: Dict[int, float] = {}
+        for i in range(num):
+            node_i = nodelist[i]
             n_idx = np.where(A[i] > 0)[0]
-            c_i = 0
+            c_i = 0.0
             for j in n_idx:
                 com_n_idx = np.where(np.logical_and(A[i] > 0, A[j] > 0))[0]
+                # 共享邻居上的路径项 + 直接连接项
                 tmp = sum([A[i][k] * A[k][j] for k in com_n_idx]) + A[i][j]
                 c_i += tmp * tmp
-            C.append((count, round(c_i, 4)))
-            count += 1
-        return {key: value for key, value in C}
+            out[node_i] = round(c_i, 4)
+        return out
 
     # ============ 计算流程（复制原代码逻辑，但移除所有print）============
     

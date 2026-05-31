@@ -229,8 +229,8 @@
                       <td class="data-cell">{{ result.input }}</td>
                       <td class="result-cell">{{ formatResultValue(result.output) }}</td>
                       <td class="importance-cell">
-                        <span class="importance-dot" :style="{ backgroundColor: getImportanceColor(result.output) }"></span>
-                        <span class="importance-text">{{ getImportanceText(result.output) }}</span>
+                        <span class="importance-dot" :style="{ backgroundColor: getImportanceColorByRank(index, displayedResults.length) }"></span>
+                        <span class="importance-text">{{ getImportanceTextByRank(index, displayedResults.length) }}</span>
                       </td>
 
                     </tr>
@@ -818,39 +818,34 @@ export default {
       return n.toFixed(4)
     }
 
-    // 重要程度（与详情页同一套逻辑）
-    const getImportanceLevel = (v) => {
-      const n = Number(v)
-      if (!Number.isFinite(n)) return 0
-      const list = sortedResults.value
-      if (!list || list.length === 0) return 0
-      const maxV = Number(list[0]?.output)
-      const minV = Number(list[list.length - 1]?.output)
-      if (!Number.isFinite(maxV) || !Number.isFinite(minV)) return 0
-      if (maxV === minV) return 3
-      const ratio = (n - minV) / (maxV - minV)
-      if (ratio >= 0.75) return 4
-      if (ratio >= 0.5) return 3
-      if (ratio >= 0.25) return 2
-      return 1
+    // 重要程度：按排名着色（前3红色，其余绿色依次变浅）
+    const getImportanceColorByRank = (rank, total) => {
+      const r = Number(rank)
+      const t = Number(total)
+      if (!Number.isFinite(r) || r < 0) return '#9ca3af'
+      if (r === 0) return '#ef4444'
+      if (r === 1) return '#f87171'
+      if (r === 2) return '#fca5a5'
+
+      const greens = ['#10b981', '#34d399', '#6ee7b7', '#a7f3d0', '#d1fae5']
+      if (!Number.isFinite(t) || t <= 3) return greens[0]
+      const rest = Math.max(1, t - 3)
+      const idx = Math.min(greens.length - 1, Math.floor((r - 3) / rest * greens.length))
+      return greens[idx]
     }
 
-    const getImportanceColor = (v) => {
-      const level = getImportanceLevel(v)
-      if (level === 4) return '#ef4444'
-      if (level === 3) return '#f59e0b'
-      if (level === 2) return '#eab308'
-      if (level === 1) return '#10b981'
-      return '#9ca3af'
-    }
-
-    const getImportanceText = (v) => {
-      const level = getImportanceLevel(v)
-      if (level === 4) return '高'
-      if (level === 3) return '较高'
-      if (level === 2) return '中'
-      if (level === 1) return '低'
-      return '-'
+    const getImportanceTextByRank = (rank, total) => {
+      const r = Number(rank)
+      const t = Number(total)
+      if (!Number.isFinite(r) || r < 0) return '-'
+      if (r === 0) return '极高'
+      if (r === 1) return '很高'
+      if (r === 2) return '较高'
+      if (!Number.isFinite(t) || t <= 3) return '中'
+      const ratio = (r - 3) / Math.max(1, t - 3)
+      if (ratio <= 0.33) return '中'
+      if (ratio <= 0.66) return '低'
+      return '较低'
     }
 
     const sortedResults = computed(() => {
@@ -917,10 +912,11 @@ export default {
     const topKHighlightMap = computed(() => {
       const map = {}
       const set = graphNodeIdSet.value
-      displayedResults.value.forEach((r) => {
+      const total = displayedResults.value.length
+      displayedResults.value.forEach((r, idx) => {
         const nodeId = String(r.input)
         if (!set.has(nodeId)) return
-        map[nodeId] = getImportanceColor(r.output)
+        map[nodeId] = getImportanceColorByRank(idx, total)
       })
       return map
     })
@@ -2002,8 +1998,8 @@ export default {
       topK,
       effectiveTopK,
       formatResultValue,
-      getImportanceColor,
-      getImportanceText,
+      getImportanceColorByRank,
+      getImportanceTextByRank,
       showErrorModal,
       errorModalMessage,
       errorModalDetail,
@@ -2078,14 +2074,14 @@ export default {
 }
 
 .report-entry-hint {
-  margin-top: 8px;
-  font-size: 12px;
+  margin-top: 6px;
+  font-size: 11px;
   color: #6b7280;
 }
 
 .report-section {
-  margin: 10px 0 16px;
-  padding: 12px;
+  margin: 6px 0 10px;
+  padding: 8px 10px;
   background: #f9fafb;
   border: 1px solid #eef2f7;
   border-radius: 10px;
@@ -2766,8 +2762,8 @@ input[type="range"] {
 
 .action-buttons {
   display: flex;
-  gap: 12px;
-  margin-top: 20px;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .middle-actions {
@@ -2856,9 +2852,9 @@ input[type="range"] {
 .results-summary {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin-bottom: 20px;
-  padding: 16px;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
   background-color: #f9fafb;
   border-radius: 6px;
 }
@@ -2869,14 +2865,14 @@ input[type="range"] {
 
 .summary-item .label {
   display: block;
-  font-size: 12px;
+  font-size: 11px;
   color: #6b7280;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .summary-item .value {
   display: block;
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
   color: #1f2937;
 }
@@ -2886,18 +2882,18 @@ input[type="range"] {
 }
 
 .topk-select {
-  margin-top: 6px;
+  margin-top: 4px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 6px 8px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .topk-hint {
   display: block;
-  margin-top: 6px;
-  font-size: 12px;
+  margin-top: 4px;
+  font-size: 11px;
   color: #6b7280;
 }
 
@@ -2924,7 +2920,7 @@ input[type="range"] {
 .results-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .results-table thead {
@@ -2932,7 +2928,7 @@ input[type="range"] {
 }
 
 .results-table th {
-  padding: 12px;
+  padding: 8px 10px;
   text-align: left;
   font-weight: 600;
   color: #374151;
@@ -2940,13 +2936,13 @@ input[type="range"] {
 }
 
 .results-table td {
-  padding: 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid #e5e7eb;
   color: #4b5563;
 }
 
 .data-cell {
-  max-width: 150px;
+  max-width: 130px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2960,18 +2956,18 @@ input[type="range"] {
 .importance-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .importance-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
   display: inline-block;
 }
 
 .importance-text {
-  font-size: 12px;
+  font-size: 11px;
   color: #4b5563;
 }
 
